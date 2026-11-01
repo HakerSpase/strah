@@ -75,7 +75,7 @@ export class Story {
     this.onFrame = null;
     this.stopLoopSounds();
     w.stopProps();
-    e.hide(); e.showWatcher(null);
+    e.hide(); e.showWatcher(null); e.noOpen.clear();
     w.resetDoors();
     w.repairAll();
     w.setAllLamps(false);
@@ -590,7 +590,31 @@ export class Story {
     this.fearTarget = 0.75;
     await wait(2.5, tk);
     e.stalk(1.5);
+    this.goal("В кладовку! Закрыть за собой дверь", "кладовка — дверь справа в коридоре; зайди и нажми [E] на двери — «Закрыть»");
+    // кладовка — укрытие: закрытую дверь оно не открывает, а скребётся и зовёт маминым голосом
+    e.noOpen.add("Door_Closet");
+    const windowsFade = this.onFrame;
+    this.onFrame = (dt) => {
+      if (windowsFade) windowsFade(dt);
+      if (this.flags.hidScene || !this.inRoom("closet") || w.doorOpen("Door_Closet")) return;
+      this.flags.hidScene = true;
+      this.goal("Тихо. Записка на полке");
+      (async () => {
+        await until(() => e.atDoor === "Door_Closet" || !e.visible, tk);
+        if (!e.visible) return;
+        const dp = w.doorPos("Door_Closet");
+        a.knock(dp, 3, 0.6);
+        await wait(1.6, tk);
+        a.whisper(dp, 2.4, 0.8);
+        ui.say("«Андрюша… открой. Это мама».", { voice: true, sec: 3.5 });
+        await wait(3.5, tk);
+        a.knock(dp, 2, 0.9);
+        await wait(2.5, tk);
+        if (!w.doorOpen("Door_Closet") && e.visible) { e.hide(); a.creak(dp, 1.2, 0.4, 0.7); ui.say("Шаги удаляются… Ушло?", { sec: 3 }); }
+      })().catch(() => {});
+    };
     await until(() => this.flags.read_I_Note6, tk);
+    this.onFrame = windowsFade;
     e.hide();
     await until(() => !ui.noteOpen, tk);
     for (const k in w.lamps) w.flicker(k, 1);

@@ -17,6 +17,8 @@ const EDGES = [
   ["c1", "kidsDoor"], ["kidsDoor", "kidsC"], ["c6", "wcDoor"], ["wcDoor", "wcC"], ["kitC", "logDoor"], ["logDoor", "logC"], ["vest", "stairL"],
 ];
 // какие двери стоят на каком ребре графа
+// укрытия: если игрок за такой закрытой дверью (и её нельзя открывать) — встать у двери снаружи
+const DOOR_STAND = { Door_Closet: { stand: "c3", inside: ["closetDoor", "closetC"] } };
 const DOOR_ON = { "bedDoor-c0": "Door_Bedroom", "c2-momDoor": "Door_Mom", "c3-closetDoor": "Door_Closet", "c5-bathDoor": "Door_Bath", "c8-vest": "Door_Front",
   "c1-kidsDoor": "Door_Kids", "c6-wcDoor": "Door_WC", "kitC-logDoor": "Door_Loggia", "vest-stairL": "Door_Outer" };
 
@@ -26,6 +28,8 @@ export class Entity {
     this.state = "hidden";
     this.speed = 0;
     this.path = [];
+    this.noOpen = new Set();   // двери, которые оно не открывает (укрытие игрока)
+    this.atDoor = null;        // стоит у такой закрытой двери
     this.adj = {};
     for (const [a, b] of EDGES) { (this.adj[a] ||= []).push(b); (this.adj[b] ||= []).push(a); }
     this.nav = Object.fromEntries(Object.entries(NAV).map(([k, [x, y]]) => [k, B(x, y, 0)]));
@@ -134,7 +138,9 @@ export class Entity {
   update(dt, t) {
     if (!this.visible) return;
     if (this.state === "chase" || this.state === "stalk") {
-      const frozen = this.state === "stalk" && this.seen(0.7);
+      // замирает, только когда на него смотрят вблизи; издалека — медленно ползёт дальше
+      const seen = this.state === "stalk" && this.seen(0.7);
+      const frozen = seen && this.distToPlayer() < 4.5;
       if (this.state === "stalk") {
         if (frozen !== this.wasFrozen) {
           this.pause(frozen);
@@ -142,7 +148,7 @@ export class Entity {
         }
         this.wasFrozen = frozen;
       }
-      if (!frozen) this._move(dt);
+      if (!frozen) this._move(dt * (seen ? 0.4 : 1));
       // хруст суставов и хрип
       this.crackT -= dt;
       if (this.crackT <= 0) {
@@ -163,23 +169,42 @@ export class Entity {
       this.pos.y = this.player.position.y;
       return;
     }
+    // игрок спрятался за дверью, которую нельзя открывать: идём к двери и стоим у неё
+    let goal = this.player.position, standAt = null;
+    for (const [dn, o] of Object.entries(DOOR_STAND)) {
+      if (this.noOpen.has(dn) && !this.world.doorOpen(dn) && o.inside.includes(this._nearest(this.player.position))) { goal = this.nav[o.stand]; standAt = dn; }
+    }
+    if (standAt && Math.hypot(goal.x - this.pos.x, goal.z - this.pos.z) < 0.3) {
+      this.atDoor = standAt;
+      const dp = this.world.doorPos(standAt);
+      this.faceTo(new Vector3(dp.x, this.pos.y, dp.z), Math.min(1, dt * 4));
+      return;
+    }
+    if (standAt !== this._standAt) { this.repath = 0; this._standAt = standAt; }
     this.repath -= dt;
     if (this.repath <= 0 || !this.path.length) {
-      this.path = this._route(this.holder.position, this.player.position);
+      this.path = this._route(this.holder.position, goal);
       this.repath = 0.5;
     }
-    let target = this.player.position;
+    let target = goal;
+    // закрытая дверь, которую ему нельзя открывать (игрок спрятался)
+    const blocked = (a, b) => { const n = DOOR_ON[`${a}-${b}`] || DOOR_ON[`${b}-${a}`]; return n && this.noOpen.has(n) && !this.world.doorOpen(n) ? n : null; };
+    this.atDoor = null;
     // идём к первому узлу пути, если он не позади нас
     while (this.path.length > 1) {
       const n = this.nav[this.path[0]];
-      if (Math.hypot(n.x - this.pos.x, n.z - this.pos.z) < 0.35) this.path.shift(); else break;
+      if (Math.hypot(n.x - this.pos.x, n.z - this.pos.z) < 0.35) {
+        const bd = blocked(this.path[0], this.path[1]);
+        if (bd) { this.atDoor = bd; this.faceTo(this.nav[this.path[1]], Math.min(1, dt * 4)); return; }
+        this.path.shift();
+      } else break;
     }
     if (this.path.length > 1) target = this.nav[this.path[0]];
     // открыть дверь на пути
     if (this.path.length > 1) {
       const key1 = `${this.path[0]}-${this.path[1]}`, key2 = `${this.path[1]}-${this.path[0]}`;
       const dname = DOOR_ON[key1] || DOOR_ON[key2];
-      if (dname && !this.world.doorOpen(dname)) this.world.setDoor(dname, true, { speed: 9 });
+      if (dname && !this.world.doorOpen(dname) && !this.noOpen.has(dname)) this.world.setDoor(dname, true, { speed: 9 });
     }
     const d = target.subtract(this.pos); d.y = 0;
     const len = d.length();
