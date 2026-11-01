@@ -21,7 +21,9 @@ export class Audio {
     comp.threshold.value = -20; comp.knee.value = 8; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.25;
     const limit = ctx.createDynamicsCompressor();
     limit.threshold.value = -4; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.001; limit.release.value = 0.1;
-    this.master.connect(comp).connect(limit).connect(ctx.destination);
+    // мягкий «потолок» по верхам: синтез и записи не режут уши (−5 дБ выше 5 кГц)
+    const shelf = ctx.createBiquadFilter(); shelf.type = "highshelf"; shelf.frequency.value = 5000; shelf.gain.value = -5;
+    this.master.connect(shelf).connect(comp).connect(limit).connect(ctx.destination);
 
     this.fx = ctx.createGain(); this.fx.gain.value = this.vol.effects; this.fx.connect(this.master);
     this.amb = ctx.createGain(); this.amb.gain.value = this.vol.ambience; this.amb.connect(this.master);
@@ -34,6 +36,53 @@ export class Audio {
     this.noiseBuf = this._noise(4, "white");
     this.brownBuf = this._noise(6, "brown");
     this.pinkBuf = this._noise(6, "pink");
+    this.loadSamples();
+  }
+
+  // ---------------- записи (public/sounds) ----------------
+  // Настоящие звуки (CC0 / CC BY, см. public/sounds/CREDITS.md). Пока файл не загрузился
+  // или его нет — играет синтез, так что игра звучит всегда.
+  async loadSamples() {
+    this.samples = {};
+    let man;
+    try { man = await (await fetch("/sounds/manifest.json")).json(); } catch (e) { return; }
+    await Promise.all(Object.entries(man).map(async ([k, files]) => {
+      const bufs = await Promise.all(files.map(async (f) => {
+        try { return await this.ctx.decodeAudioData(await (await fetch("/sounds/" + f)).arrayBuffer()); } catch (e) { return null; }
+      }));
+      const ok = bufs.filter(Boolean);
+      if (ok.length) this.samples[k] = ok;
+    }));
+    if (this._ambStarted) this._ambienceSamples();
+  }
+
+  has(k) { return !!(this.samples && this.samples[k]); }
+  _pick(k) { const l = this.samples[k]; return l[Math.floor(Math.random() * l.length)]; }
+
+  /** Разовый звук из записи. false — записи нет, нужен синтез. */
+  play(k, pos, { vol = 0.5, rate = 1, wet = 0.3, ref = 1.2, hrtf = false, when = 0, filter = null } = {}) {
+    if (!this.ctx || !this.has(k)) return false;
+    const buf = this._pick(k);
+    const out = this._out(pos, { wet, ref, hrtf, life: buf.duration / rate + when + 1.5 }); out.gain.value = vol;
+    const s = this._src(buf, false, rate * rnd(0.97, 1.03));
+    (filter ? (s.connect(filter), filter.out || filter) : s).connect(out);
+    s.start(this.now + when);
+    return true;
+  }
+
+  /** Петля из записи: {out, src, stop(fade)}. null — записи нет. */
+  loopSample(k, pos, { vol = 0.4, rate = 1, wet = 0.3, ref = 1.2, fade = 0.3, bus = "fx", filter = null } = {}) {
+    if (!this.ctx || !this.has(k)) return null;
+    const buf = this._pick(k);
+    const out = this._out(pos, { wet, ref, life: 0, bus }); out.gain.value = 0;
+    out.gain.setTargetAtTime(vol, this.now, fade / 3);
+    const s = this._src(buf, true, rate);
+    (filter ? (s.connect(filter), filter.out || filter) : s).connect(out);
+    s.start(0, rnd(0, buf.duration * 0.8));
+    return {
+      out, src: s,
+      stop: (f = 0.3) => { out.gain.setTargetAtTime(0, this.now, f / 3); setTimeout(() => { try { s.stop(); } catch (e) {} out.disconnect(); }, f * 1000 + 300); },
+    };
   }
 
   setVolume(kind, v) {
@@ -159,8 +208,7 @@ export class Audio {
     // метель: два слоя ветра с завыванием и порывами
     this.windGain = ctx.createGain(); this.windGain.gain.value = 0.25; this.windGain.connect(this.amb);
     const w1 = this._filter("bandpass", 380, 1.2), w2 = this._filter("bandpass", 900, 9);
-    loop(this.pinkBuf, w1, 0.6, this.windGain);
-    loop(this.noiseBuf, w2, 0.05, this.windGain);
+    this.synthWind = [loop(this.pinkBuf, w1, 0.6, this.windGain), loop(this.noiseBuf, w2, 0.02, this.windGain)];
     for (const [flt, base, depth, rate] of [[w1, 380, 200, 0.06], [w2, 900, 450, 0.09]]) {
       const l = ctx.createOscillator(); l.frequency.value = rate; const lg = ctx.createGain(); lg.gain.value = depth;
       l.connect(lg).connect(flt.frequency); l.start();
@@ -175,7 +223,25 @@ export class Audio {
       const og = ctx.createGain(); og.gain.value = 0.05; o.connect(og).connect(dlp); o.start();
     }
     dlp.connect(this.droneGain); this.droneGain.connect(this.amb);
+    this.synthDrone = dlp;
     this._houseTimer = setInterval(() => this._houseSound(), 8000);
+    this._ambStarted = true;
+    if (this.samples && Object.keys(this.samples).length) this._ambienceSamples();
+  }
+
+  // записи вместо синтетических ветра и гула, как только они загрузились
+  _ambienceSamples() {
+    if (this._ambSamplesOn) return;
+    this._ambSamplesOn = true;
+    const t = this.now;
+    const amb = (k, bus, vol) => {
+      if (!this.has(k)) return null;
+      const s = this._src(this._pick(k), true); const g = this.ctx.createGain(); g.gain.value = 0;
+      g.gain.setTargetAtTime(vol, t, 2); s.connect(g).connect(bus); s.start(0, rnd(0, 10)); return g;
+    };
+    if (amb("wind", this.windGain, 0.9)) for (const g of this.synthWind) g.gain.setTargetAtTime(0, t, 2);
+    if (amb("drone", this.droneGain, 1.6)) this.synthDrone.disconnect();
+    amb("roomtone", this.amb, 0.35);
   }
 
   _houseSound() {
@@ -197,6 +263,8 @@ export class Audio {
 
   // ---------------- шаги и предметы ----------------
   footstep(pos, surface = "wood", run = false) {
+    const sk = surface === "snow" ? "step_snow" : surface === "concrete" ? "step_stairs" : "step_wood";
+    if (this.play(sk, pos, { vol: (run ? 0.5 : 0.32) * (surface === "carpet" ? 0.55 : 1), wet: 0.15, rate: rnd(0.9, 1.1) })) return;
     const t = this.now, out = this._out(pos, { wet: 0.2, life: 1 });
     out.gain.value = run ? 0.7 : 0.45;
     if (surface === "snow") {
@@ -211,6 +279,7 @@ export class Audio {
   }
 
   creak(pos, dur = 0.8, vol = 0.4, pitch = 1) {
+    if (this.play("creak", pos, { vol: vol * 1.3, rate: Math.min(1.4, pitch) * rnd(0.9, 1.1), wet: 0.4 })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(pos, { wet: 0.35, life: dur + 2 }); out.gain.value = vol;
     const o = ctx.createOscillator(); o.type = "sawtooth";
@@ -231,6 +300,7 @@ export class Audio {
   }
 
   latch(pos, vol = 0.5) {
+    if (this.play("latch", pos, { vol: vol * 0.9, wet: 0.2 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.2, life: 1 }); out.gain.value = vol;
     this._burst(out, t, { f: 3200, q: 4, peak: 0.5, d: 0.02 });
     this._burst(out, t + 0.05, { f: 2400, q: 5, peak: 0.35, d: 0.03 });
@@ -238,6 +308,7 @@ export class Audio {
 
   // разные двери звучат по-разному
   door(pos, kind = "wood", open = true, speed = 1) {
+    if (kind !== "fridge" && kind !== "oven" && this.play(open ? "door_open" : "door_close", pos, { vol: kind === "small" ? 0.35 : 0.6, rate: (kind === "small" ? 1.25 : 1) * Math.min(1.2, Math.max(0.75, speed)), wet: 0.4 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.4, life: 3 }); out.gain.value = 0.6;
     if (open) {
       this.latch(pos, 0.4);
@@ -256,6 +327,7 @@ export class Audio {
   }
 
   doorSlam(pos) {
+    if (this.play("door_slam", pos, { vol: 0.75, wet: 0.6 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.7, life: 3 }); out.gain.value = 0.9;
     this._burst(out, t, { f: 900, type: "lowpass", peak: 0.9, d: 0.35, buf: this.brownBuf });
     this._tone(out, t, { f: 70, f2: 30, peak: 0.7, d: 0.4 });
@@ -264,17 +336,19 @@ export class Audio {
 
   click(pos, vol = 0.4) {
     const t = this.now, out = this._out(pos, { wet: 0.15, life: 1 }); out.gain.value = vol;
-    this._burst(out, t, { f: 2600, q: 3, peak: 0.5, a: 0.001, d: 0.025 });
+    this._burst(out, t, { f: 1700, q: 2, peak: 0.4, a: 0.002, d: 0.025 });
   }
 
   // советский выключатель: сухой пластиковый щелчок
   switchClick(pos) {
+    if (this.play("switch", pos, { vol: 0.45, wet: 0.25 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.25, life: 1 }); out.gain.value = 0.55;
     this._burst(out, t, { f: 3800, q: 2, peak: 0.6, a: 0.001, d: 0.015 });
     this._tone(out, t, { f: 900, f2: 600, type: "triangle", peak: 0.12, d: 0.03 });
   }
 
   knock(pos, count = 3, gap = 0.32) {
+    if (this.play("knock", pos, { vol: 0.7, wet: 0.45, hrtf: true })) return;
     for (let i = 0; i < count; i++) setTimeout(() => this.ctx && this.thump(pos, 0.7, 180), i * gap * 1000);
   }
 
@@ -290,6 +364,7 @@ export class Audio {
   }
 
   pipes(pos) {
+    if (this.play("pipes", pos, { vol: 0.25, wet: 0.6 })) return;
     const ctx = this.ctx, t = this.now, d = rnd(1.5, 3);
     const out = this._out(pos, { wet: 0.6, life: d + 2 }); out.gain.value = 0.12;
     const n = this._src(this.brownBuf); const bp = this._filter("bandpass", 300, 9);
@@ -299,6 +374,7 @@ export class Audio {
   }
 
   drip(pos) {
+    if (this.play("drip", pos, { vol: 0.35, wet: 0.6, ref: 0.6, rate: rnd(0.85, 1.15) })) return;
     const t = this.now, out = this._out(pos, { wet: 0.6, ref: 0.6, life: 1.5 }); out.gain.value = 0.25;
     this._tone(out, t, { f: rnd(1100, 1500), f2: 380, peak: 0.4, a: 0.001, d: 0.06 });
   }
@@ -306,6 +382,8 @@ export class Audio {
   // ---------------- вода, газ, холодильник ----------------
   /** Струя воды. kind: tap — в мойку, bath — в ванну (ниже и гулче). Возвращает {stop}. */
   water(pos, kind = "tap") {
+    const ws = this.loopSample(kind === "bath" ? "water_bath" : "water_tap", pos, { vol: kind === "bath" ? 0.6 : 0.45, ref: 0.8, wet: 0.3 });
+    if (ws) return { stop: () => { ws.stop(0.4); for (let i = 0; i < 4; i++) setTimeout(() => this.ctx && this.drip(pos), 300 + i * rnd(250, 600)); } };
     const ctx = this.ctx;
     const out = this._out(pos, { wet: 0.3, life: 0, ref: 0.8 }); out.gain.value = 0;
     out.gain.setTargetAtTime(kind === "bath" ? 0.6 : 0.45, this.now, 0.08);
@@ -337,6 +415,7 @@ export class Audio {
   }
 
   flush(pos) {
+    if (this.play("flush", pos, { vol: 0.6, wet: 0.5 })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(pos, { wet: 0.5, life: 9 }); out.gain.value = 0.7;
     this.latch(pos, 0.5);
@@ -353,6 +432,8 @@ export class Audio {
 
   gas(pos) {
     const ctx = this.ctx;
+    const gs = this.loopSample("gas", pos, { vol: 0.3, ref: 0.8, wet: 0.15 });
+    if (gs) { this.play("gas_ignite", pos, { vol: 0.5, wet: 0.15 }); return { stop: () => gs.stop(0.3) }; }
     const out = this._out(pos, { wet: 0.15, life: 0, ref: 0.8 }); out.gain.value = 0;
     // поджиг: тик-тик-тик — пф
     const t = this.now;
@@ -369,6 +450,8 @@ export class Audio {
   }
 
   fridgeHum(pos) {
+    const fs = this.loopSample("fridge", pos, { vol: 0.35, ref: 0.8, wet: 0.1 });
+    if (fs) return { stop: () => fs.stop(0.6) };
     const ctx = this.ctx;
     const out = this._out(pos, { wet: 0.1, life: 0, ref: 0.8 }); out.gain.value = 0;
     out.gain.setTargetAtTime(0.35, this.now, 0.3);
@@ -381,6 +464,7 @@ export class Audio {
   }
 
   squeak(pos) {
+    if (this.play("squeak", pos, { vol: 0.35, wet: 0.2 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.2, life: 1.5 }); out.gain.value = 0.35;
     this._tone(out, t, { f: 900, f2: 1400, type: "triangle", peak: 0.3, a: 0.02, d: 0.25 });
   }
@@ -395,6 +479,7 @@ export class Audio {
   }
 
   breath(vol = 0.2, exhale = false, dur = 0.7) {
+    if (this.play("breath", null, { vol: vol * 1.5, wet: 0.03, rate: rnd(0.95, 1.05) })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(null, { wet: 0.03, life: dur + 1 }); out.gain.value = vol;
     const n = this._src(this.pinkBuf);
@@ -405,6 +490,7 @@ export class Audio {
   }
 
   whisper(pos, dur = 2.2, vol = 0.45) {
+    if (this.play("whisper", pos, { vol: vol * 1.3, wet: 0.45, ref: 0.5, hrtf: true })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(pos, { wet: 0.45, ref: 0.5, life: dur + 2, hrtf: true }); out.gain.value = vol;
     const n = this._src(this.noiseBuf);
@@ -425,6 +511,8 @@ export class Audio {
 
   // советский телефонный звонок (механический звонок)
   phoneRing(pos) {
+    const rs = this.loopSample("phone_ring", pos, { vol: 0.35, ref: 1.5, wet: 0.4, fade: 0.05 });
+    if (rs) return { stop: () => rs.stop(0.05) };
     const ctx = this.ctx;
     const out = this._out(pos, { wet: 0.4, ref: 1.5, life: 0 }); out.gain.value = 0.4;
     let alive = true;
@@ -452,7 +540,17 @@ export class Audio {
   }
 
   // колыбельная музыкальной шкатулки
-  musicBox(pos, { slow = 1, detune = 0, vol = 0.35, loop = false } = {}) {
+  musicBox(pos, { slow = 1, detune = 0, vol = 0.35, loop = false, filter = null } = {}) {
+    // запись шкатулки: замедленная и чуть расстроенная — «заводится» сама
+    if (this.has("musicbox")) {
+      const ms = this.loopSample("musicbox", pos, { vol: vol * 1.2, ref: 0.8, wet: 0.5, rate: 1 / Math.sqrt(slow), filter, fade: 0.6 });
+      if (detune) {
+        const l = this.ctx.createOscillator(); l.frequency.value = 0.23; const lg = this.ctx.createGain(); lg.gain.value = detune;
+        l.connect(lg).connect(ms.src.detune); l.start();
+        return { stop: () => { ms.stop(0.6); setTimeout(() => l.stop(), 1500); } };
+      }
+      return { stop: () => ms.stop(0.6) };
+    }
     const out = this._out(pos, { wet: 0.5, ref: 0.8, life: 0 }); out.gain.value = vol;
     const notes = [76, 79, 83, 81, 79, 76, 74, 76, 0, 72, 76, 79, 77, 76, 74, 71, 0, 76, 79, 83, 84, 83, 79, 81, 79, 76, 0, 74, 72, 71, 72, 76];
     let alive = true;
@@ -463,7 +561,7 @@ export class Audio {
         if (!m) return;
         const t = t0 + i * 0.32 * slow * (1 + i * 0.004 * slow);
         const f = 440 * Math.pow(2, (m - 69) / 12) * Math.pow(2, (detune * rnd(-1, 1)) / 1200);
-        for (const [r, a, d] of [[1, 1, 1.2], [4.02, 0.15, 0.2], [2.0, 0.2, 0.5]]) this._tone(out, t, { f: f * r, peak: a * 0.18, a: 0.002, d });
+        for (const [r, a, d] of [[1, 1, 1.2], [4.02, 0.05, 0.12], [2.0, 0.15, 0.5]]) this._tone(out, t, { f: f * r, peak: a * 0.18, a: 0.002, d });
       });
       if (loop) setTimeout(play, notes.length * 320 * slow + 1800);
     };
@@ -471,19 +569,30 @@ export class Audio {
     return { stop: () => { alive = false; out.gain.setTargetAtTime(0, this.now, 0.2); setTimeout(() => out.disconnect(), 3000); } };
   }
 
+  // старый приёмник: тихое шипение эфира + колыбельная «через динамик» (узкая полоса 350–3000 Гц).
+  // Включается плавно, без резкой стены шума.
   radio(pos) {
     const ctx = this.ctx;
-    const out = this._out(pos, { wet: 0.3, ref: 1, life: 0 }); out.gain.value = 0.4;
-    const n = this._src(this.noiseBuf, true);
-    const bp = this._filter("bandpass", 2400, 0.6);
-    const ng = ctx.createGain(); ng.gain.value = 0.12;
-    n.connect(bp).connect(ng).connect(out); n.start();
-    const crackle = setInterval(() => { if (Math.random() < 0.4) this.click(pos, 0.1); }, 110);
-    const mb = this.musicBox(pos, { slow: 1.35, detune: 45, vol: 0.22, loop: true });
-    return { stop: () => { clearInterval(crackle); mb.stop(); out.gain.setTargetAtTime(0, this.now, 0.05); setTimeout(() => { n.stop(); out.disconnect(); }, 400); } };
+    const radioEQ = () => { const hp = this._filter("highpass", 350, 0.7); const lp = this._filter("lowpass", 3000, 0.7); hp.connect(lp); hp.out = lp; return hp; };
+    let hiss;
+    const ls = this.loopSample("radio_static", pos, { vol: 0.07, ref: 1, wet: 0.25, fade: 1.2, filter: this._filter("lowpass", 3500) });
+    if (ls) hiss = ls;
+    else {
+      const out = this._out(pos, { wet: 0.3, ref: 1, life: 0 }); out.gain.value = 0;
+      out.gain.setTargetAtTime(0.25, this.now, 0.4);
+      const n = this._src(this.pinkBuf, true);
+      const ng = ctx.createGain(); ng.gain.value = 0.06;
+      n.connect(this._filter("bandpass", 1400, 0.5)).connect(ng).connect(out); n.start();
+      hiss = { stop: () => { out.gain.setTargetAtTime(0, this.now, 0.05); setTimeout(() => { n.stop(); out.disconnect(); }, 400); } };
+    }
+    // музыка идёт через «динамик»
+    const mb = this.musicBox(pos, { slow: 1.35, detune: 30, vol: 0.2, loop: true, filter: radioEQ() });
+    return { stop: () => { hiss.stop(0.1); mb.stop(); } };
   }
 
   tvStatic(pos) {
+    const ts = this.loopSample("tv_static", pos, { vol: 0.12, ref: 1, wet: 0.25, filter: this._filter("lowpass", 4500) });
+    if (ts) return { stop: () => ts.stop(0.15) };
     const ctx = this.ctx;
     const out = this._out(pos, { wet: 0.25, ref: 1, life: 0 }); out.gain.value = 0.15;
     const n = this._src(this.noiseBuf, true); n.connect(this._filter("highpass", 900)).connect(out); n.start();
@@ -491,6 +600,7 @@ export class Audio {
   }
 
   bulbPop(pos) {
+    if (this.play("bulb_pop", pos, { vol: 0.45, wet: 0.45 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.45, life: 2 }); out.gain.value = 0.55;
     this._burst(out, t, { f: 2000, type: "highpass", peak: 0.9, d: 0.08 });
     for (let i = 0; i < 6; i++) this._tone(out, t + 0.05 + Math.random() * 0.5, { f: rnd(3500, 7500), peak: 0.1, a: 0.001, d: 0.05 });
@@ -498,6 +608,7 @@ export class Audio {
 
   // ---------------- машина ----------------
   starter(pos, ok = false) {
+    if (this.play(ok ? "car_start" : "car_start_fail", pos, { vol: 0.6, wet: 0.2 })) return;
     const ctx = this.ctx, t = this.now, d = ok ? 1.2 : 1.8;
     const out = this._out(pos, { wet: 0.2, life: d + 1 }); out.gain.value = 0.55;
     const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = 38;
@@ -511,6 +622,8 @@ export class Audio {
 
   engine(pos) {
     const ctx = this.ctx;
+    const es = this.loopSample("engine", pos, { vol: 0.5, wet: 0.15, fade: 0.8 });
+    if (es) return { rev: (k) => es.src.playbackRate.setTargetAtTime(Math.min(2, 0.8 + k * 0.35), this.now, 0.4), stop: () => es.stop(1.5) };
     const out = this._out(pos, { wet: 0.15, life: 0 }); out.gain.value = 0.0;
     out.gain.setTargetAtTime(0.4, this.now, 0.3);
     const oscs = [];
@@ -528,14 +641,15 @@ export class Audio {
 
   // ---------------- удары ужаса ----------------
   sting(kind = "screech", vol = 0.8) {
+    if (this.play(kind === "boom" ? "boom" : "sting", null, { vol: vol * 0.8, wet: 0.5 })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(null, { wet: 0.6, life: 4 }); out.gain.value = vol;
     if (kind === "screech") {
       for (let i = 0; i < 5; i++) {
         const o = ctx.createOscillator(); o.type = "sawtooth";
-        const f = rnd(900, 2200);
+        const f = rnd(420, 900);
         o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * rnd(0.35, 0.6), t + 1.5);
-        const g = ctx.createGain(); this._env(g.gain, t, 0.01, 0.045, 1.6);
+        const g = ctx.createGain(); this._env(g.gain, t, 0.04, 0.03, 1.6);
         o.connect(this._filter("bandpass", f, 1.5)).connect(g).connect(out); o.start(t); o.stop(t + 1.8);
       }
     }
@@ -544,6 +658,7 @@ export class Audio {
   }
 
   swell(dur = 3, vol = 0.45) {
+    if (this.play("riser", null, { vol: vol * 1.1, wet: 0.5 })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(null, { wet: 0.7, life: dur + 2 }); out.gain.value = vol;
     const n = this._src(this.noiseBuf); const bp = this._filter("bandpass", 400, 3);
@@ -553,10 +668,12 @@ export class Audio {
   }
 
   jointCrack(pos, n = 4) {
+    if (this.play("bones", pos, { vol: 0.6, wet: 0.35, hrtf: true })) return;
     for (let i = 0; i < n; i++) setTimeout(() => this.ctx && this.click(pos, rnd(0.3, 0.7)), i * rnd(40, 140));
   }
 
   rattle(pos, dur = 2.5, vol = 0.5) {
+    if (this.play("growl", pos, { vol: vol * 1.2, wet: 0.45, ref: 0.8, hrtf: true, rate: rnd(0.85, 1.0) })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(pos, { wet: 0.45, ref: 0.8, life: dur + 1, hrtf: true }); out.gain.value = vol;
     const n = this._src(this.pinkBuf); const bp = this._filter("bandpass", 520, 2.5);
@@ -568,6 +685,7 @@ export class Audio {
   }
 
   scream(pos, vol = 0.9) {
+    if (this.play("scream", pos, { vol: vol * 0.75, wet: 0.5, ref: 2, hrtf: true })) return;
     const ctx = this.ctx, t = this.now;
     const out = this._out(pos, { wet: 0.5, ref: 2, life: 3, hrtf: true }); out.gain.value = vol;
     const shaper = ctx.createWaveShaper();
