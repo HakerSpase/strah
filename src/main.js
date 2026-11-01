@@ -275,7 +275,12 @@ function setupTouch() {
 
 // ---------------- старт ----------------
 function loadSave() { try { return JSON.parse(localStorage.getItem("k14-save") || "null"); } catch (e) { return null; } }
-$("start").addEventListener("click", () => startGame(0));
+$("start").addEventListener("click", () => {
+  const s = loadSave();
+  if (s && s.chapter > 0 && !confirm(`Начать заново? Сохранение (глава ${s.chapter + 1}) будет стёрто.`)) return;
+  try { localStorage.removeItem("k14-save"); } catch (e) {}
+  startGame(0);
+});
 $("continue").addEventListener("click", () => { const s = loadSave(); startGame(s ? s.chapter : 0); });
 
 async function startGame(chapter) {
