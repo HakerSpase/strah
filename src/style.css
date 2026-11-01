@@ -98,3 +98,4 @@ body.touch #note .paper::before { left: 34px; }
 #skip-intro { position: fixed; right: 22px; bottom: 22px; opacity: 0.6; }
 #skip-intro:hover { opacity: 1; }
 .tbtn { font-size: 10px; }
+body:not(.playing) #pause-btn { display: none !important; }
