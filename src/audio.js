@@ -463,6 +463,12 @@ export class Audio {
     return { stop: () => { out.gain.setTargetAtTime(0, this.now, 0.2); setTimeout(() => { out.osc.forEach((o) => o.stop()); out.disconnect(); }, 800); } };
   }
 
+  // шорох бумаги (записки)
+  paper(vol = 0.4) {
+    if (this.play("paper", null, { vol, wet: 0.05 })) return;
+    this.creak(null, 0.15, vol * 0.25, 3);
+  }
+
   squeak(pos) {
     if (this.play("squeak", pos, { vol: 0.35, wet: 0.2 })) return;
     const t = this.now, out = this._out(pos, { wet: 0.2, life: 1.5 }); out.gain.value = 0.35;

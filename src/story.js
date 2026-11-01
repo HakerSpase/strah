@@ -96,7 +96,7 @@ export class Story {
     for (const [id, note] of Object.entries(NOTES)) {
       this.on(id, "Прочитать", () => {
         ui.showNote(note.text, note.child);
-        this.audio.creak(null, 0.15, 0.1, 3);
+        this.audio.paper(0.4);
         this.flags["read_" + id] = true;
       });
     }
