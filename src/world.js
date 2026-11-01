@@ -18,6 +18,18 @@ const DOORS = {
 // окна: откуда в квартиру слышна метель (координаты Blender)
 const WINDOWS = [[0, -4.4], [-4.4, 3.2], [4.0, 9.6], [4.0, 2.2], [4.65, 9.5], [0, 16.6]];
 
+// Источник света без собственного огня в сцене. Настоящих огней — постоянное число «прокси»,
+// они переезжают к ближайшим горящим источникам: шейдеры не пересобираются, фризов нет.
+class Src {
+  constructor(position, diffuse, range = 8) {
+    this.position = position; this.diffuse = diffuse; this.range = range;
+    this.intensity = 0; this.enabled = true;
+  }
+  setEnabled(v) { this.enabled = v; }
+  isEnabled() { return this.enabled; }
+  get power() { return this.enabled ? this.intensity : 0; }
+}
+
 export class World {
   constructor(scene, audio) {
     this.scene = scene;
@@ -35,7 +47,7 @@ export class World {
     const scene = this.scene;
     this.mobile = mobile;
     this.lampK = mobile ? 2 : 4;
-    const maxLights = mobile ? 4 : 6;
+    const maxLights = this.lampK + 3;      // прокси (K+1) + фонарик + фоновый свет
     const c = await LoadAssetContainerAsync(base + "apartment.glb", scene, {
       onProgress: (e) => e.lengthComputable && onProgress(e.loaded / e.total),
     });
@@ -101,11 +113,7 @@ export class World {
     for (const [name, k] of Object.entries(LAMPS)) {
       if (!this.nodes[name]) continue;
       const p = this.pos(name).add(new Vector3(0, -0.12, 0));
-      const l = new PointLight("L_" + name, p, this.scene);
-      l.diffuse = new Color3(1.0, 0.72, 0.42);
-      l.specular = new Color3(0.9, 0.7, 0.5);
-      l.intensity = 0; l.range = 8;
-      l.setEnabled(false);
+      const l = new Src(p, new Color3(1.0, 0.72, 0.42), 8);
       let bulb = null;
       for (const m of this.meshesOf(name)) {
         if (m.material && m.material.name === "Bulb") { bulb = bulb || m.material.clone("Bulb_" + name); m.material = bulb; }
@@ -113,6 +121,13 @@ export class World {
       this.lamps[name] = { light: l, bulb, base: 2.6 * k, level: 0, target: 0, flicker: 0, broken: false, color: l.diffuse.clone() };
     }
     this._lampT = 0;
+    this.proxies = [];
+    for (let i = 0; i < this.lampK + 1; i++) {
+      const l = new PointLight("proxy" + i, Vector3.Zero(), this.scene);
+      l.diffuse = new Color3(1, 0.72, 0.42); l.specular = new Color3(0.9, 0.7, 0.5);
+      l.intensity = 0; l.range = 8;
+      this.proxies.push({ light: l, src: null });
+    }
   }
 
   setLamp(name, on, { instant = false } = {}) {
@@ -123,7 +138,7 @@ export class World {
   lampOn(name) { const L = this.lamps[name]; return !!L && L.target > 0.5 && !L.broken; }
   setAllLamps(on, except = []) { for (const k in this.lamps) if (!except.includes(k)) this.setLamp(k, on, { instant: true }); }
   flicker(name, amount = 1) { const L = this.lamps[name]; if (L) L.flicker = Math.max(L.flicker, amount); }
-  lampColor(name, c) { const L = this.lamps[name]; if (L) { L.color = c; L.light.diffuse = c; } }
+  lampColor(name, c) { const L = this.lamps[name]; if (L) { L.color = c.clone(); L.light.diffuse = c.clone(); } }
   breakLamp(name) {
     const L = this.lamps[name]; if (!L || L.broken) return;
     if (this.audio.ctx) this.audio.bulbPop(this.xyzOf(L.light.position));
@@ -131,11 +146,26 @@ export class World {
   }
   repairAll() { for (const k in this.lamps) { this.lamps[k].broken = false; this.lampColor(k, new Color3(1.0, 0.72, 0.42)); } }
 
-  // включены только K ближайших ламп: число огней в шейдере постоянно, ничего не пересобирается
+  // прокси-огни занимают самые заметные источники рядом с игроком
   _chooseLamps(p) {
-    const arr = Object.values(this.lamps).map((L) => ({ L, d: Vector3.DistanceSquared(L.light.position, p) - (L.target > 0 ? 6 : 0) }));
-    arr.sort((a, b) => a.d - b.d);
-    arr.forEach((o, i) => { const on = i < this.lampK; if (o.L.light.isEnabled() !== on) o.L.light.setEnabled(on); });
+    const srcs = Object.values(this.lamps).map((L) => L.light).concat(this.extraSrc || []);
+    const scored = srcs.map((S) => ({ S, k: (S.power > 0.02 ? 1 : 0.001) / (1 + Vector3.DistanceSquared(S.position, p)) }));
+    scored.sort((a, b) => b.k - a.k);
+    const want = scored.slice(0, this.proxies.length).map((o) => o.S);
+    // те, кто уже на месте, остаются на своих прокси — без скачков
+    const free = this.proxies.filter((P) => !want.includes(P.src));
+    for (const S of want) if (!this.proxies.some((P) => P.src === S)) { const P = free.shift(); if (P) P.src = S; }
+  }
+
+  _syncProxies() {
+    for (const P of this.proxies) {
+      const S = P.src;
+      if (!S) { P.light.intensity = 0; continue; }
+      P.light.position.copyFrom(S.position);
+      P.light.diffuse.copyFrom(S.diffuse);
+      P.light.range = S.range;
+      P.light.intensity = S.power;
+    }
   }
 
   // ---------------- двери ----------------
@@ -194,7 +224,7 @@ export class World {
       m.diffuseColor = new Color3(0.03, 0.03, 0.03);
       m.specularColor = new Color3(0.3, 0.3, 0.3);
       m.reflectionTexture = rt;
-      m.maxSimultaneousLights = 6;
+      m.maxSimultaneousLights = this.lampK + 3;
       for (const ms of meshes) ms.material = m;
       this.mirrors.push({ name: d.name, rt, pos, mesh: meshes[0] });
     }
@@ -205,14 +235,11 @@ export class World {
   // ---------------- предметы: вода, газ, холодильник, ТВ ----------------
   _setupProps() {
     for (const n of ["Water_Stream", "Bath_Stream", "Gas_Flames"]) this.show(n, false);
-    const mk = (name, p, col, range) => {
-      const l = new PointLight(name, p, this.scene);
-      l.diffuse = col; l.intensity = 0; l.range = range; l.setEnabled(false);
-      return l;
-    };
+    const mk = (name, p, col, range) => { const l = new Src(p, col, range); l.enabled = false; return l; };
     this.fridgeLight = mk("fridgeLight", this.nodes.FridgeLight ? this.pos("FridgeLight") : B(3.62, 7.85, 1.25), new Color3(0.85, 0.95, 1.0), 2.5);
     this.gasLight = mk("gasLight", B(2.62, 7.8, 1.0), new Color3(0.3, 0.5, 1.0), 2.5);
     this.tvLight = mk("tvLight", B(-2.5, 2.1, 0.9), new Color3(0.6, 0.7, 1), 5);
+    this.extraSrc = [this.fridgeLight, this.gasLight, this.tvLight];
   }
 
   setWater(which, on) {
@@ -293,8 +320,8 @@ export class World {
     moon.intensity = 0.25; moon.diffuse = new Color3(0.55, 0.6, 0.8); moon.groundColor = new Color3(0.12, 0.08, 0.07);
     moon.specular = Color3.Black();
     moon.includedOnlyMeshes = meshes;
-    for (const L of Object.values(this.lamps)) L.light.excludedMeshes = meshes;
-    for (const l of [this.ambient, this.fridgeLight, this.gasLight, this.tvLight]) l.excludedMeshes = meshes;
+    for (const P of this.proxies) P.light.excludedMeshes = meshes;
+    this.ambient.excludedMeshes = meshes;
     this.outside = { windows: 1, lamps: 1, storm: 1 };
     this._horizon(c.materials);
     this._blizzard();
@@ -396,10 +423,11 @@ export class World {
       }
       v *= 0.95 + 0.05 * Math.sin(t * 7.3 + L.base) * Math.sin(t * 2.1);
       L.light.intensity = L.base * v;
-      if (L.bulb) L.bulb.emissiveColor = L.color.scale(clamp(v, 0, 1.2) * 1.6);
+      if (L.bulb) L.color.scaleToRef(clamp(v, 0, 1.2) * 1.6, L.bulb.emissiveColor);
       if (playerPos) hum += v / (1 + Vector3.DistanceSquared(L.light.position, playerPos));
     }
     if (this.audio.ctx) this.audio.setHum(hum * 0.8);
+    this._syncProxies();
     for (const k in this.doors) {
       const d = this.doors[k];
       if (Math.abs(d.target - d.angle) > 0.0005) {
