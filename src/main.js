@@ -44,21 +44,21 @@ window.game = { scene, world, player, entity, story, audio };   // для отл
 // ---------------- постобработка ----------------
 const pipe = new DefaultRenderingPipeline("pipe", !lightModels, scene, [player.camera]);
 pipe.fxaaEnabled = true;
-pipe.bloomThreshold = 0.75; pipe.bloomWeight = 0.35; pipe.bloomKernel = 32; pipe.bloomScale = 0.5;
-pipe.grainEnabled = true; pipe.grain.animated = true; pipe.grain.intensity = 10;
+pipe.bloomThreshold = 0.85; pipe.bloomWeight = 0.25; pipe.bloomKernel = 32; pipe.bloomScale = 0.5;
+pipe.grainEnabled = true; pipe.grain.animated = true; pipe.grain.intensity = 4;
 pipe.imageProcessingEnabled = true;
 const ip = pipe.imageProcessing;
 ip.toneMappingEnabled = true; ip.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-ip.contrast = 1.25;
-ip.vignetteEnabled = true; ip.vignetteWeight = 3.2; ip.vignetteStretch = 0.3;
+ip.contrast = 1.12;
+ip.vignetteEnabled = true; ip.vignetteWeight = 1.6; ip.vignetteStretch = 0.5;
 ip.vignetteColor = new Color4(0, 0, 0, 0); ip.vignetteBlendMode = ImageProcessingConfiguration.VIGNETTEMODE_MULTIPLY;
 let ssao = null;
 
 function applyQuality(q) {
-  engine.setHardwareScalingLevel(q === "low" ? (isTouch ? 1.15 : 1.35) : 1);
+  engine.setHardwareScalingLevel(q === "low" ? (isTouch ? 1.4 : 1.35) : 1);
   pipe.bloomEnabled = q !== "low";
-  pipe.chromaticAberrationEnabled = q !== "low";
-  if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = 6;
+  pipe.chromaticAberrationEnabled = q !== "low" && !isTouch;
+  if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = 0;
   if (q === "high" && !ssao) {
     try {
       ssao = new SSAO2RenderingPipeline("ssao", scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [player.camera]);
@@ -161,9 +161,10 @@ function frame() {
   }
   const f = playing ? story.fear : 0.1;
   if (audio.ctx) audio.setFear(f);
-  pipe.grain.intensity = 9 + f * 26;
-  if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = 5 + f * 40 + player.shake * 40;
-  ip.vignetteWeight = 3 + f * 3.5;
+  // эффекты мягкие: цветной «прострел» только в момент испуга
+  pipe.grain.intensity = 3 + f * 7;
+  if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = player.shake * 25;
+  ip.vignetteWeight = 1.5 + f * 1.5;
   if (playing && f > 0.45 && audio.ctx && !clock.paused) {
     heartT -= dt;
     if (heartT <= 0) { audio.heartbeat(0.8 + f, 0.2 + f * 0.45); heartT = 1.25 - f * 0.65; }
@@ -172,7 +173,9 @@ function frame() {
   if (playing && !player.frozen && !ui.noteOpen) {
     if (frameN % 3 === 0) {
       const id = lookAtId();
-      hovered = id && story.handlers[id] ? id : null;
+      const nh = id && story.handlers[id] ? id : null;
+      if (nh !== hovered) { outline(hovered, false); outline(nh, true); }
+      hovered = nh;
       const h = hovered && story.handlers[hovered];
       ui.prompt(h ? (isTouch ? h.label : `[E] ${h.label}`) : "");
       $("t-act").classList.toggle("ready", !!h);
@@ -184,6 +187,13 @@ function frame() {
     if (near !== M.near) { M.rt.refreshRate = near ? 3 : 0; M.rt.resetRefreshCounter(); M.near = near; }
   }
   scene.render();
+}
+
+// тонкий контур у предмета, с которым можно взаимодействовать
+function outline(id, on) {
+  if (!id) return;
+  const meshes = id === "I_Car" ? world.meshesOf("Ext_Car_Drive") : world.meshesOf(id);
+  for (const m of meshes) { m.renderOutline = on; m.outlineWidth = 0.008; m.outlineColor = new Color3(0.9, 0.85, 0.7); }
 }
 
 function lookAtId() {

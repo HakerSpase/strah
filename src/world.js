@@ -338,7 +338,7 @@ export class World {
       [B(5.6, -4, -6), B(20, 16, 8)],        // восток (кухня, детская, лоджия)
     ];
     this.snow = zones.map(([a, b]) => {
-      const ps = new ParticleSystem("snow", this.mobile ? 500 : 1800, scene);
+      const ps = new ParticleSystem("snow", this.mobile ? 300 : 1800, scene);
       ps.particleTexture = tex;
       ps.emitter = new Vector3(0, 0, 0);
       ps.minEmitBox = new Vector3(Math.min(a.x, b.x), Math.max(a.y, b.y), Math.min(a.z, b.z));
@@ -347,7 +347,7 @@ export class World {
       ps.minEmitPower = 2.5; ps.maxEmitPower = 5;
       ps.minLifeTime = 4; ps.maxLifeTime = 7;
       ps.minSize = 0.12; ps.maxSize = 0.26;
-      ps.emitRate = this.mobile ? 120 : 420;
+      ps.emitRate = this.mobile ? 80 : 420;
       ps.color1 = new Color4(1, 1, 1, 0.85); ps.color2 = new Color4(0.85, 0.85, 0.95, 0.6);
       ps.colorDead = new Color4(1, 1, 1, 0);
       ps.blendMode = ParticleSystem.BLENDMODE_STANDARD;
