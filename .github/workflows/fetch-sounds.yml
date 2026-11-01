@@ -1,0 +1,39 @@
+name: Реальные звуки (Openverse) в ветку sounds
+
+# Ищет звуки с открытыми коммерческими лицензиями (Freesound, Wikimedia и др. через Openverse)
+# по scripts/sound-queries.json и кладёт кандидатов в ветку sounds, папка raw/.
+# Из них лучшие отбираются и обрабатываются в public/sounds/.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - scripts/sound-queries.json
+      - .github/workflows/fetch-sounds.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Поиск и загрузка
+        timeout-minutes: 35
+        continue-on-error: true
+        env:
+          FETCH_MINUTES: "30"
+        run: python3 scripts/fetch_sounds.py scripts/sound-queries.json /tmp/raw
+      - name: В ветку sounds
+        if: always()
+        run: |
+          git config user.name "sound-bot"
+          git config user.email "sound-bot@users.noreply.github.com"
+          git checkout -q --orphan sounds && git rm -rq --cached . && git clean -fdq
+          mkdir -p raw && cp -r /tmp/raw/. raw/
+          git add -f raw
+          git commit -qm "sounds: кандидаты из Openverse"
+          git push -qf origin HEAD:refs/heads/sounds
