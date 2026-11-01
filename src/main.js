@@ -268,7 +268,7 @@ function setupTouch() {
   $("t-act").addEventListener("pointerdown", (e) => { e.preventDefault(); interact(); });
   $("t-light").addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    if (player.hasLight) { player.toggleLight(); $("t-light").classList.toggle("on", player.lightOn); }
+    if (player.hasLight) player.toggleLight();
   });
   $("t-run").addEventListener("pointerdown", (e) => { e.preventDefault(); player.touch.run = !player.touch.run; $("t-run").classList.toggle("on", player.touch.run); });
 }

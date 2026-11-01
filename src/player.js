@@ -82,6 +82,7 @@ export class Player {
 
   toggleLight(on = !this.lightOn) {
     this.lightOn = on;
+
     this.audio.click(null, 0.35);
   }
 
@@ -187,6 +188,14 @@ export class Player {
       if (Math.random() < 0.4) li *= Math.random() < 0.6 ? 0 : 0.4;
     }
     L.intensity = li;
+    // индикатор фонарика на экране и на сенсорной кнопке
+    if (this._shownOn !== this.lightOn) {
+      this._shownOn = this.lightOn;
+      const ind = document.getElementById("light-ind");
+      if (ind) { ind.classList.toggle("on", this.lightOn); ind.firstChild.textContent = this.lightOn ? "фонарик: вкл " : "фонарик: выкл "; }
+      const btn = document.getElementById("t-light");
+      if (btn) btn.classList.toggle("on", this.lightOn);
+    }
     if (L.isEnabled() !== this.hasLight) L.setEnabled(this.hasLight);
 
     const fwd = dir, up = new Vector3(0, 1, 0);

@@ -85,7 +85,7 @@ export class Story {
     w.show("I_Keys", n === 0);
     if (this.famMat) this.famMat.albedoTexture = n >= 1 ? this.photoTexScratched : this.famTex;
     w.setOutside({ windows: [1, 0.9, 0.7, 0.35, 0.05][n], lamps: 1, storm: [0.8, 1, 1.4, 1.6, 2][n] });
-    p.hasLight = n >= 1; p.lightOn = false; p.lightPower = 1;
+    p.hasLight = true; p.lightOn = false; p.lightPower = 1;
     p.noRun = false; p.speedMul = 1; p.frozen = false; p.lookTarget = null; p.mount = null;
     this.fearTarget = [0.08, 0.25, 0.45, 0.6, 0.85][n];
     this.flags = {};

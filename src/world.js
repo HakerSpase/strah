@@ -1,6 +1,6 @@
 import {
   Axis, Color3, Color4, DynamicTexture, HemisphericLight, LoadAssetContainerAsync, Material, MirrorTexture,
-  ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, Vector3,
+  MeshBuilder, ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import { B, clamp, rnd } from "./util.js";
@@ -296,7 +296,32 @@ export class World {
     for (const L of Object.values(this.lamps)) L.light.excludedMeshes = meshes;
     for (const l of [this.ambient, this.fridgeLight, this.gasLight, this.tvLight]) l.excludedMeshes = meshes;
     this.outside = { windows: 1, lamps: 1, storm: 1 };
+    this._horizon(c.materials);
     this._blizzard();
+  }
+
+  // земля до горизонта и кольцо далёких панелек — чтобы из окна не был виден край карты
+  _horizon(mats) {
+    const scene = this.scene, G = -6.3;
+    const snow = mats.find((m) => m.name === "Snow");
+    const facades = mats.filter((m) => /^Facade_[ABC]$/.test(m.name));
+    const ground = MeshBuilder.CreateGround("farGround", { width: 400, height: 400 }, scene);
+    ground.position.y = G - 0.05;
+    if (snow) ground.material = snow;
+    ground.isPickable = false;
+    let seed = 7;
+    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2 + r() * 0.1;
+      const dist = 95 + r() * 45;
+      const w = 40 + r() * 30, h = 15.6 + (r() < 0.3 ? 14 : 0), d = 12;
+      const b = MeshBuilder.CreateBox("farHouse" + i, { width: w, height: h, depth: d }, scene);
+      b.position.set(Math.cos(a) * dist, G + h / 2, -4 + Math.sin(a) * dist);
+      b.rotation.y = -a + Math.PI / 2;
+      b.material = facades[i % facades.length];
+      b.isPickable = false;
+      b.freezeWorldMatrix();
+    }
   }
 
   _blizzard() {
@@ -304,7 +329,7 @@ export class World {
     const tex = new DynamicTexture("flake", 32, scene, false);
     const ctx = tex.getContext();
     const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-    g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.4, "rgba(240,244,255,0.6)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.25, "rgba(250,252,255,0.95)"); g.addColorStop(0.55, "rgba(235,240,255,0.35)"); g.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32); tex.hasAlpha = true; tex.update();
     // метель вокруг дома: ветер несёт снег с запада на восток
     const zones = [
@@ -321,7 +346,7 @@ export class World {
       ps.direction1 = new Vector3(3.5, -1.2, -0.8); ps.direction2 = new Vector3(6.0, -2.0, 0.8);
       ps.minEmitPower = 2.5; ps.maxEmitPower = 5;
       ps.minLifeTime = 4; ps.maxLifeTime = 7;
-      ps.minSize = 0.06; ps.maxSize = 0.14;
+      ps.minSize = 0.12; ps.maxSize = 0.26;
       ps.emitRate = this.mobile ? 120 : 420;
       ps.color1 = new Color4(1, 1, 1, 0.85); ps.color2 = new Color4(0.85, 0.85, 0.95, 0.6);
       ps.colorDead = new Color4(1, 1, 1, 0);
