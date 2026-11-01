@@ -17,7 +17,7 @@ if (isTouch) document.body.classList.add("touch");
 // ---------------- настройки (сохраняются в браузере) ----------------
 const engine = new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "high-performance" }, false);
 const weakGpu = isTouch || /Radeon\(TM\) Graphics|Radeon Graphics|Intel|UHD|Iris|Mali|Adreno|PowerVR|Apple GPU/i.test(engine.getGlInfo().renderer);
-const DEFAULTS = { sens: 1, bright: 1, master: 0.85, ambience: 0.8, effects: 0.9, quality: weakGpu ? "low" : "medium" };
+const DEFAULTS = { fx: "strong", sens: 1, bright: 1, master: 0.85, ambience: 0.8, effects: 0.9, quality: weakGpu ? "low" : "medium" };
 let settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem("k14-settings") || "{}")); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem("k14-settings", JSON.stringify(settings)); } catch (e) {} };
@@ -57,7 +57,7 @@ let ssao = null;
 function applyQuality(q) {
   engine.setHardwareScalingLevel(q === "low" ? (isTouch ? 1.4 : 1.35) : 1);
   pipe.bloomEnabled = q !== "low";
-  pipe.chromaticAberrationEnabled = q !== "low" && !isTouch;
+  pipe.chromaticAberrationEnabled = settings.fx === "strong" || (q !== "low" && !isTouch);
   if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = 0;
   if (q === "high" && !ssao) {
     try {
@@ -101,6 +101,13 @@ function buildSettings(el) {
     i.dataset.key = key;
     l.appendChild(i); el.appendChild(l);
   }
+  const lf = document.createElement("label");
+  lf.textContent = "Эффекты камеры ";
+  const sf = document.createElement("select");
+  sf.innerHTML = '<option value="strong">Сильные</option><option value="soft">Мягкие</option>';
+  sf.value = settings.fx; sf.dataset.key = "fx";
+  sf.addEventListener("change", () => { settings.fx = sf.value; saveSettings(); applySettings(); syncSettings(); });
+  lf.appendChild(sf); el.appendChild(lf);
   const l = document.createElement("label");
   l.textContent = "Графика ";
   const s = document.createElement("select");
@@ -161,10 +168,18 @@ function frame() {
   }
   const f = playing ? story.fear : 0.1;
   if (audio.ctx) audio.setFear(f);
-  // эффекты мягкие: цветной «прострел» только в момент испуга
-  pipe.grain.intensity = 3 + f * 7;
-  if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = player.shake * 25;
-  ip.vignetteWeight = 1.5 + f * 1.5;
+  if (settings.fx === "strong") {
+    // сильные эффекты (по умолчанию): плёнка, цветной прострел, тяжёлая виньетка
+    pipe.grain.intensity = 9 + f * 26;
+    if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = 5 + f * 40 + player.shake * 40;
+    ip.vignetteWeight = 3 + f * 3.5;
+    ip.contrast = 1.25;
+  } else {
+    pipe.grain.intensity = 3 + f * 7;
+    if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = player.shake * 25;
+    ip.vignetteWeight = 1.5 + f * 1.5;
+    ip.contrast = 1.12;
+  }
   if (playing && f > 0.45 && audio.ctx && !clock.paused) {
     heartT -= dt;
     if (heartT <= 0) { audio.heartbeat(0.8 + f, 0.2 + f * 0.45); heartT = 1.25 - f * 0.65; }

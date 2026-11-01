@@ -305,16 +305,20 @@ export class World {
     const scene = this.scene, G = -6.3;
     const snow = mats.find((m) => m.name === "Snow");
     const facades = mats.filter((m) => /^Facade_[ABC]$/.test(m.name));
-    const ground = MeshBuilder.CreateGround("farGround", { width: 400, height: 400 }, scene);
+    const ground = MeshBuilder.CreateGround("farGround", { width: 320, height: 320 }, scene);
     ground.position.y = G - 0.05;
     if (snow) ground.material = snow;
     ground.isPickable = false;
     let seed = 7;
     const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * Math.PI * 2 + r() * 0.1;
-      const dist = 95 + r() * 45;
-      const w = 40 + r() * 30, h = 15.6 + (r() < 0.3 ? 14 : 0), d = 12;
+    // два плотных кольца домов внахлёст — сквозь просветы не видно края
+    const ring = [];
+    for (let i = 0; i < 44; i++) ring.push([i / 44, 92 + r() * 12, 50 + r() * 20, 15.6 + (r() < 0.35 ? 14 : 0)]);
+    for (let i = 0; i < 40; i++) ring.push([(i + 0.5) / 40, 135 + r() * 10, 70 + r() * 25, 30 + r() * 15]);
+    for (let i = 0; i < ring.length; i++) {
+      const [frac, dist, w, h] = ring[i];
+      const a = frac * Math.PI * 2;
+      const d = 14;
       const b = MeshBuilder.CreateBox("farHouse" + i, { width: w, height: h, depth: d }, scene);
       b.position.set(Math.cos(a) * dist, G + h / 2, -4 + Math.sin(a) * dist);
       b.rotation.y = -a + Math.PI / 2;
