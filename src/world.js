@@ -66,6 +66,8 @@ export class World {
 
     this._setupLamps();
     this._setupDoors();
+    // дверца холодильника стоит у стены: открываем не дальше ~75°, иначе уходит в стену
+    if (this.doors.Fridge_Door) this.doors.Fridge_Door.max = 1.3;
     this._setupMirrors();
     this._setupProps();
     this.tvTex = new DynamicTexture("tvsnow", { width: 128, height: 96 }, scene, false);
@@ -319,7 +321,7 @@ export class World {
       ps.direction1 = new Vector3(3.5, -1.2, -0.8); ps.direction2 = new Vector3(6.0, -2.0, 0.8);
       ps.minEmitPower = 2.5; ps.maxEmitPower = 5;
       ps.minLifeTime = 4; ps.maxLifeTime = 7;
-      ps.minSize = 0.03; ps.maxSize = 0.085;
+      ps.minSize = 0.06; ps.maxSize = 0.14;
       ps.emitRate = this.mobile ? 120 : 420;
       ps.color1 = new Color4(1, 1, 1, 0.85); ps.color2 = new Color4(0.85, 0.85, 0.95, 0.6);
       ps.colorDead = new Color4(1, 1, 1, 0);

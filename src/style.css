@@ -87,9 +87,14 @@ body.touch .desktop-only { display: none !important; }
 .tbtn.big.ready { border-color: rgba(255,230,190,0.9); color: #fff; background: rgba(120, 90, 40, 0.35); }
 #t-light { right: max(128px, calc(env(safe-area-inset-right) + 100px)); bottom: 30px; }
 #t-run { right: max(40px, env(safe-area-inset-right)); bottom: 132px; }
-#pause-btn { position: absolute; right: 18px; top: 44px; pointer-events: auto; margin: 0; padding: 6px 12px; font-size: 12px; background: rgba(0,0,0,0.3); }
+#pause-btn { position: fixed; z-index: 9; right: 18px; top: 44px; pointer-events: auto; margin: 0; padding: 6px 12px; font-size: 12px; background: rgba(0,0,0,0.3); }
 body.touch #objective { top: 14px; left: 16px; font-size: 12px; max-width: 60vw; }
 body.touch #prompt { top: auto; bottom: 130px; }
 body.touch #subtitle { bottom: 4%; font-size: 14px; }
 body.touch #note .paper { min-height: 0; max-height: 82vh; overflow-y: auto; padding: 22px 20px 20px 46px; font-size: 16px; line-height: 26px; }
 body.touch #note .paper::before { left: 34px; }
+
+#intro { flex-direction: column; }
+#skip-intro { position: fixed; right: 22px; bottom: 22px; opacity: 0.6; }
+#skip-intro:hover { opacity: 1; }
+.tbtn { font-size: 10px; }

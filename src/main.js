@@ -29,7 +29,7 @@ scene.useRightHandedSystem = true;
 scene.clearColor = new Color4(0, 0, 0, 1);
 scene.collisionsEnabled = true;
 scene.fogMode = Scene.FOGMODE_EXP2;
-scene.fogDensity = 0.075;
+scene.fogDensity = 0.035;
 scene.fogColor = new Color3(0.01, 0.01, 0.012);
 scene.skipPointerMovePicking = true;
 scene.autoClear = true;
@@ -295,9 +295,8 @@ async function startGame(chapter) {
   ui.show("intro", true);
   document.body.classList.add("playing");
   const skip = { skip: chapter > 0 };
-  const onSkip = () => (skip.skip = true);
-  window.addEventListener("keydown", onSkip, { once: true });
-  $("intro").addEventListener("pointerdown", onSkip, { once: true });
+  // заставку пропускает только кнопка — случайный тап или клавиша её не сбрасывают
+  $("skip-intro").onclick = () => (skip.skip = true);
   await ui.typewrite("intro-text",
     "Декабрь. Мама умерла сорок дней назад.\n\n" +
     "Я не был в этой квартире с девяносто восьмого года — с той ночи, когда пропала моя сестра Аня.\n" +
