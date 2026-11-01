@@ -111,7 +111,7 @@ export class Story {
     this._lockedDoor("Door_Mom", "Заперто. Мамина комната — она всегда её запирала.");
     this._lockedDoor("Door_Closet", "Кладовка. Заперто изнутри?..");
     this._lockedDoor("Door_Kids", "Анина комната. Заперто. Мама так и не открыла её.");
-    this._lockedDoor("Door_Front", "Заперто. Ключи — в холодильнике.");
+    this._lockedDoor("Door_Front", () => (this.flags.read_I_Note2 ? "Заперто. Ключи — в холодильнике, в маслёнке." : "Заперто. Ключей не видно. Может, мама оставила записку?"));
     this._lockedDoor("Door_Outer", "Не поддаётся.");
     // --- холодильник ---
     this.on("Fridge_Door", "Открыть холодильник", () => {
@@ -179,7 +179,7 @@ export class Story {
       const p = this.world.doorPos(name);
       this.audio.latch(p, 0.6); setTimeout(() => this.audio.latch(p, 0.5), 140);
       this.audio.thump(p, 0.2, 160);
-      ui.say(msg, { sec: 3 });
+      ui.say(typeof msg === "function" ? msg() : msg, { sec: 3 });
     });
   }
 
