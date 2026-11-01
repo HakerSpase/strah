@@ -1,0 +1,111 @@
+{
+ "wind": [
+  "wind_1.mp3",
+  "wind_2.mp3"
+ ],
+ "drone": [
+  "drone_1.mp3",
+  "drone_2.mp3"
+ ],
+ "roomtone": [
+  "roomtone_1.mp3"
+ ],
+ "radio_static": [
+  "radio_static_1.mp3"
+ ],
+ "musicbox": [
+  "musicbox_1.mp3"
+ ],
+ "door_open": [
+  "door_open_1.mp3",
+  "door_open_2.mp3"
+ ],
+ "door_close": [
+  "door_close_1.mp3"
+ ],
+ "door_slam": [
+  "door_slam_1.mp3",
+  "door_slam_2.mp3"
+ ],
+ "knock": [
+  "knock_1.mp3"
+ ],
+ "creak": [
+  "creak_1.mp3",
+  "creak_2.mp3",
+  "creak_3.mp3",
+  "creak_4.mp3",
+  "creak_5.mp3",
+  "creak_6.mp3"
+ ],
+ "phone_ring": [
+  "phone_ring_1.mp3"
+ ],
+ "breath": [
+  "breath_1.mp3"
+ ],
+ "growl": [
+  "growl_1.mp3",
+  "growl_2.mp3",
+  "growl_3.mp3"
+ ],
+ "scream": [
+  "scream_1.mp3",
+  "scream_2.mp3"
+ ],
+ "bones": [
+  "bones_1.mp3"
+ ],
+ "sting": [
+  "sting_1.mp3",
+  "sting_2.mp3",
+  "sting_3.mp3"
+ ],
+ "boom": [
+  "boom_1.mp3",
+  "boom_2.mp3"
+ ],
+ "riser": [
+  "riser_1.mp3",
+  "riser_2.mp3"
+ ],
+ "tv_static": [
+  "tv_static_1.mp3"
+ ],
+ "switch": [
+  "switch_1.mp3",
+  "switch_2.mp3",
+  "switch_3.mp3"
+ ],
+ "water_tap": [
+  "water_tap_1.mp3"
+ ],
+ "water_bath": [
+  "water_bath_1.mp3"
+ ],
+ "drip": [
+  "drip_1.mp3"
+ ],
+ "flush": [
+  "flush_1.mp3"
+ ],
+ "gas": [
+  "gas_1.mp3"
+ ],
+ "fridge": [
+  "fridge_1.mp3"
+ ],
+ "squeak": [
+  "squeak_1.mp3"
+ ],
+ "car_start_fail": [
+  "car_start_fail_1.mp3"
+ ],
+ "car_start": [
+  "car_start_1.mp3"
+ ],
+ "paper": [
+  "paper_1.mp3",
+  "paper_2.mp3"
+ ]
+}
