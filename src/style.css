@@ -103,3 +103,13 @@ body:not(.playing) #pause-btn { display: none !important; }
 #light-ind.on { color: rgba(255, 236, 190, 0.85); }
 #light-ind.on::before { content: "● "; }
 body.touch #light-ind { top: 84px; right: 18px; }
+
+/* заметная подсказка взаимодействия */
+#crosshair { transition: all 0.15s; }
+#crosshair.active { width: 22px; height: 22px; margin: -11px; background: transparent; border: 2px solid rgba(255, 230, 180, 0.9);
+  box-shadow: 0 0 12px rgba(255, 210, 140, 0.6); animation: pulse 1.1s ease-in-out infinite; }
+#prompt:not(:empty) { background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 230, 180, 0.35); padding: 8px 16px; border-radius: 4px;
+  font-size: 17px; color: #fff3dc; animation: pulse 1.1s ease-in-out infinite; }
+.tbtn.big.ready { animation: pulse 0.9s ease-in-out infinite; box-shadow: 0 0 18px rgba(255, 210, 140, 0.55); }
+#t-crouch { left: max(28px, env(safe-area-inset-left)); bottom: 30px; }
+@keyframes pulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }

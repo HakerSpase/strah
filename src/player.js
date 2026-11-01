@@ -61,6 +61,7 @@ export class Player {
     window.addEventListener("keydown", (e) => {
       this.keys[e.code] = true;
       if (e.code === "KeyF" && this.enabled && this.hasLight) this.toggleLight();
+      if ((e.code === "KeyC" || e.code === "ControlLeft") && this.enabled) this.crouch = !this.crouch;
     });
     window.addEventListener("keyup", (e) => (this.keys[e.code] = false));
     // Chrome иногда присылает ложный гигантский рывок мыши при захвате курсора — отбрасываем его
@@ -126,7 +127,7 @@ export class Player {
       if (this.touch && (this.touch.x || this.touch.y)) { mv.addInPlace(fwd.scale(this.touch.y)); mv.addInPlace(right.scale(this.touch.x)); }
       const moving = mv.lengthSquared() > 0.01;
       const run = moving && (k.ShiftLeft || k.ShiftRight || (this.touch && this.touch.run)) && this.stamina > 0.05 && !this.noRun;
-      const target = moving ? (run ? 3.4 : 1.55) * (this.speedMul || 1) * Math.min(1, mv.length()) : 0;
+      const target = moving ? (run && !this.crouch ? 3.4 : this.crouch ? 0.9 : 1.55) * (this.speedMul || 1) * Math.min(1, mv.length()) : 0;
       if (moving) mv.normalize();
       this.vel.x = lerp(this.vel.x, mv.x * target, Math.min(1, dt * 9));
       this.vel.z = lerp(this.vel.z, mv.z * target, Math.min(1, dt * 9));
@@ -161,7 +162,11 @@ export class Player {
 
     const right = new Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     if (this.mount) cam.position.copyFrom(this.mount());
-    else cam.position.copyFrom(this.body.position).addInPlace(new Vector3(0, EYE + bobY + idle, 0)).addInPlace(right.scale(bobX));
+    // присед: глаза опускаются плавно, ходьба медленнее
+    this.eyeH = this.eyeH ?? EYE;
+    this.eyeH += ((this.crouch ? 0.95 : EYE) - this.eyeH) * Math.min(1, dt * 8);
+    if (this.mount) {}
+    else cam.position.copyFrom(this.body.position).addInPlace(new Vector3(0, this.eyeH + bobY + idle, 0)).addInPlace(right.scale(bobX));
     cam.position.addInPlaceFromFloats(rnd(-1, 1) * sh * 0.03, rnd(-1, 1) * sh * 0.03, rnd(-1, 1) * sh * 0.03);
 
     let yaw = this.yaw, pitch = this.pitch;

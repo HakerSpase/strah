@@ -178,6 +178,7 @@ function frame() {
       hovered = nh;
       const h = hovered && story.handlers[hovered];
       ui.prompt(h ? (isTouch ? h.label : `[E] ${h.label}`) : "");
+      $("crosshair").classList.toggle("active", !!h);
       $("t-act").classList.toggle("ready", !!h);
     }
   } else { ui.prompt(""); hovered = null; }
@@ -197,7 +198,7 @@ function outline(id, on) {
 }
 
 function lookAtId() {
-  const ray = new Ray(player.camera.position, player.forward(), 2.1);
+  const ray = new Ray(player.camera.position, player.forward(), 2.5);
   const hit = scene.pickWithRay(ray, (m) => m.isPickable && m.isEnabled() && m.isVisible && m.name !== "playerBody");
   return hit && hit.pickedMesh && hit.pickedMesh.metadata && hit.pickedMesh.metadata.id;
 }
@@ -280,6 +281,7 @@ function setupTouch() {
     e.preventDefault();
     if (player.hasLight) player.toggleLight();
   });
+  $("t-crouch").addEventListener("pointerdown", (e) => { e.preventDefault(); player.crouch = !player.crouch; $("t-crouch").classList.toggle("on", player.crouch); });
   $("t-run").addEventListener("pointerdown", (e) => { e.preventDefault(); player.touch.run = !player.touch.run; $("t-run").classList.toggle("on", player.touch.run); });
 }
 
