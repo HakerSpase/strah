@@ -134,6 +134,12 @@ async function boot() {
   $("loading-text").classList.add("hidden");
   $("loading").classList.add("hidden");
   $("start").classList.remove("hidden");
+  const save = loadSave();
+  if (save && save.chapter > 0 && save.chapter < 5) {
+    $("continue").textContent = `Продолжить — глава ${save.chapter + 1}`;
+    $("continue").classList.remove("hidden");
+    $("start").textContent = "Новая игра";
+  }
   $("settings").classList.remove("hidden");
   engine.runRenderLoop(frame);
 }
@@ -268,7 +274,11 @@ function setupTouch() {
 }
 
 // ---------------- старт ----------------
-$("start").addEventListener("click", async () => {
+function loadSave() { try { return JSON.parse(localStorage.getItem("k14-save") || "null"); } catch (e) { return null; } }
+$("start").addEventListener("click", () => startGame(0));
+$("continue").addEventListener("click", () => { const s = loadSave(); startGame(s ? s.chapter : 0); });
+
+async function startGame(chapter) {
   audio.start({ master: settings.master, ambience: settings.ambience, effects: settings.effects });
   audio.ambience();
   applySettings();
@@ -279,7 +289,7 @@ $("start").addEventListener("click", async () => {
   ui.show("title", false);
   ui.show("intro", true);
   document.body.classList.add("playing");
-  const skip = { skip: false };
+  const skip = { skip: chapter > 0 };
   const onSkip = () => (skip.skip = true);
   window.addEventListener("keydown", onSkip, { once: true });
   $("intro").addEventListener("pointerdown", onSkip, { once: true });
@@ -298,10 +308,11 @@ $("start").addEventListener("click", async () => {
   player.enabled = true;
   setTimeout(() => ui.fade(0, 3), 300);
   story.onEnding = ending;
-  story.begin();
-});
+  story.begin(chapter);
+}
 
 async function ending() {
+  try { localStorage.removeItem("k14-save"); } catch (e) {}
   playing = false;
   player.enabled = false;
   ui.hud(false);

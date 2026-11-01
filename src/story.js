@@ -46,12 +46,12 @@ export class Story {
   }
 
   // ---------------- общее ----------------
-  async begin() {
+  async begin(chapter = 0) {
     this.photoTexScratched = new Texture("/textures/photo_family_scratched_albedo.png", this.world.scene, false, false);
     this.famMat = this.world.scene.materials.find((m) => m.name === "Photo_Family");
     this.famTex = this.famMat && this.famMat.albedoTexture;
     this.audio.housePos = () => { const p = this.player.position; return { x: p.x + rnd(-4, 4), y: p.y + rnd(0.2, 2.6), z: p.z + rnd(-4, 4) }; };
-    await this.runLoop(0);
+    await this.runLoop(chapter);
   }
 
   async runLoop(n) {
@@ -60,6 +60,8 @@ export class Story {
     this.loop = n;
     this.dead = false;
     this.setup(n);
+    // автосохранение: игра продолжится с начала этой главы (и на телефоне тоже — хранится в браузере)
+    try { localStorage.setItem("k14-save", JSON.stringify({ chapter: n, at: Date.now() })); } catch (e) {}
     try {
       await [this.ch0, this.ch1, this.ch2, this.ch3, this.ch4][n].call(this, tk);
     } catch (e) {
