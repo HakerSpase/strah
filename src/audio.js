@@ -1,0 +1,590 @@
+// Процедурный звук: всё синтезируется в Web Audio, без файлов.
+// Три шины (эффекты / атмосфера / голоса) → компрессор → лимитер. Каждый короткий звук сам
+// отключается после затухания, поэтому звуковой поток не перегружается и не трещит.
+
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+export class Audio {
+  constructor() {
+    this.ctx = null;
+    this.fear = 0;
+    this.vol = { master: 0.85, ambience: 0.8, effects: 0.9 };
+  }
+
+  start(vol) {
+    if (this.ctx) return;
+    if (vol) Object.assign(this.vol, vol);
+    const ctx = (this.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "playback" }));
+    this.master = ctx.createGain();
+    this.master.gain.value = this.vol.master;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -20; comp.knee.value = 8; comp.ratio.value = 5; comp.attack.value = 0.004; comp.release.value = 0.25;
+    const limit = ctx.createDynamicsCompressor();
+    limit.threshold.value = -4; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.001; limit.release.value = 0.1;
+    this.master.connect(comp).connect(limit).connect(ctx.destination);
+
+    this.fx = ctx.createGain(); this.fx.gain.value = this.vol.effects; this.fx.connect(this.master);
+    this.amb = ctx.createGain(); this.amb.gain.value = this.vol.ambience; this.amb.connect(this.master);
+
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = this._impulse(1.8, 2.8);
+    this.wet = ctx.createGain(); this.wet.gain.value = 0.45;
+    this.reverb.connect(this.wet).connect(this.fx);
+
+    this.noiseBuf = this._noise(4, "white");
+    this.brownBuf = this._noise(6, "brown");
+    this.pinkBuf = this._noise(6, "pink");
+  }
+
+  setVolume(kind, v) {
+    this.vol[kind] = v;
+    if (!this.ctx) return;
+    const node = { master: this.master, ambience: this.amb, effects: this.fx }[kind];
+    if (node) node.gain.setTargetAtTime(v, this.now, 0.05);
+  }
+
+  // ---------------- низкоуровневые помощники ----------------
+  _impulse(seconds, decay) {
+    const ctx = this.ctx, len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay) * 0.6;
+    }
+    return buf;
+  }
+
+  _noise(seconds, color) {
+    const ctx = this.ctx, len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    let last = 0, b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < len; i++) {
+      const w = Math.random() * 2 - 1;
+      if (color === "brown") { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+      else if (color === "pink") { b0 = 0.997 * b0 + w * 0.029591; b1 = 0.985 * b1 + w * 0.032534; b2 = 0.95 * b2 + w * 0.048056; d[i] = (b0 + b1 + b2 + w * 0.1) * 0.6; }
+      else d[i] = w;
+    }
+    return buf;
+  }
+
+  /** Выход звука. pos=null — «в голове». life — через сколько секунд всё отключить (0 = вечный).
+   *  hrtf — дорогое объёмное панорамирование, только для важных звуков. */
+  _out(pos, { wet = 0.35, ref = 1.2, roll = 1.4, life = 4, hrtf = false, bus = "fx" } = {}) {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    const nodes = [g];
+    let tail = g;
+    if (pos) {
+      const p = ctx.createPanner();
+      p.panningModel = hrtf ? "HRTF" : "equalpower";
+      p.distanceModel = "inverse";
+      p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = 60;
+      p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
+      g.connect(p); tail = p; g.panner = p; nodes.push(p);
+    }
+    tail.connect(bus === "amb" ? this.amb : this.fx);
+    if (wet > 0) {
+      const s = ctx.createGain(); s.gain.value = wet;
+      tail.connect(s).connect(this.reverb); nodes.push(s);
+    }
+    if (life > 0) setTimeout(() => nodes.forEach((n) => n.disconnect()), life * 1000);
+    return g;
+  }
+
+  _src(buf, loop = false, rate = 1) {
+    const s = this.ctx.createBufferSource();
+    s.buffer = buf; s.loop = loop; s.playbackRate.value = rate;
+    return s;
+  }
+
+  _env(param, t, a, peak, d, end = 0.0001) {
+    param.cancelScheduledValues(t);
+    param.setValueAtTime(0.0001, t);
+    param.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + a);
+    param.exponentialRampToValueAtTime(end, t + a + d);
+  }
+
+  _filter(type, f, q = 1) {
+    const b = this.ctx.createBiquadFilter();
+    b.type = type; b.frequency.value = f; b.Q.value = q;
+    return b;
+  }
+
+  _burst(out, t, { f = 1000, q = 1, peak = 0.5, a = 0.002, d = 0.1, buf = null, type = "bandpass", rate = 1 }) {
+    const n = this._src(buf || this.noiseBuf, false, rate);
+    const fl = this._filter(type, f, q);
+    const g = this.ctx.createGain(); this._env(g.gain, t, a, peak, d);
+    n.connect(fl).connect(g).connect(out); n.start(t, rnd(0, 3)); n.stop(t + a + d + 0.05);
+  }
+
+  _tone(out, t, { f = 200, f2 = null, type = "sine", peak = 0.3, a = 0.003, d = 0.15 }) {
+    const o = this.ctx.createOscillator(); o.type = type;
+    o.frequency.setValueAtTime(f, t);
+    if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + a + d);
+    const g = this.ctx.createGain(); this._env(g.gain, t, a, peak, d);
+    o.connect(g).connect(out); o.start(t); o.stop(t + a + d + 0.05);
+  }
+
+  get now() { return this.ctx.currentTime; }
+
+  updateListener(pos, fwd, up) {
+    if (!this.ctx) return;
+    const l = this.ctx.listener, t = this.now;
+    if (l.positionX) {
+      l.positionX.setTargetAtTime(pos.x, t, 0.03); l.positionY.setTargetAtTime(pos.y, t, 0.03); l.positionZ.setTargetAtTime(pos.z, t, 0.03);
+      l.forwardX.setTargetAtTime(fwd.x, t, 0.03); l.forwardY.setTargetAtTime(fwd.y, t, 0.03); l.forwardZ.setTargetAtTime(fwd.z, t, 0.03);
+      l.upX.value = up.x; l.upY.value = up.y; l.upZ.value = up.z;
+    } else {
+      l.setPosition(pos.x, pos.y, pos.z);
+      l.setOrientation(fwd.x, fwd.y, fwd.z, up.x, up.y, up.z);
+    }
+  }
+
+  // ---------------- фоновые петли ----------------
+  ambience() {
+    const ctx = this.ctx;
+    const loop = (buf, filt, gain, bus = this.amb) => {
+      const s = this._src(buf, true); const g = ctx.createGain(); g.gain.value = gain;
+      s.connect(filt).connect(g).connect(bus); s.start(0, rnd(0, 3)); return g;
+    };
+    // тишина квартиры
+    loop(this.brownBuf, this._filter("lowpass", 160), 0.12);
+    // гул ламп 50 Гц — один на всю квартиру, громкость задаёт мир по ближайшим лампам
+    this.humGain = ctx.createGain(); this.humGain.gain.value = 0; this.humGain.connect(this.amb);
+    for (const [f, a] of [[50, 0.5], [100, 0.4], [150, 0.18], [250, 0.08]]) {
+      const o = ctx.createOscillator(); o.frequency.value = f;
+      const g = ctx.createGain(); g.gain.value = a * 0.02; o.connect(g).connect(this.humGain); o.start();
+    }
+    // метель: два слоя ветра с завыванием и порывами
+    this.windGain = ctx.createGain(); this.windGain.gain.value = 0.25; this.windGain.connect(this.amb);
+    const w1 = this._filter("bandpass", 380, 1.2), w2 = this._filter("bandpass", 900, 9);
+    loop(this.pinkBuf, w1, 0.6, this.windGain);
+    loop(this.noiseBuf, w2, 0.05, this.windGain);
+    for (const [flt, base, depth, rate] of [[w1, 380, 200, 0.06], [w2, 900, 450, 0.09]]) {
+      const l = ctx.createOscillator(); l.frequency.value = rate; const lg = ctx.createGain(); lg.gain.value = depth;
+      l.connect(lg).connect(flt.frequency); l.start();
+    }
+    const gust = ctx.createOscillator(); gust.frequency.value = 0.13; const gg = ctx.createGain(); gg.gain.value = 0.12;
+    gust.connect(gg).connect(this.windGain.gain); gust.start();
+    // фон ужаса: диссонанс 55 / 58.3 / 82.4 Гц, громкость = страх
+    this.droneGain = ctx.createGain(); this.droneGain.gain.value = 0;
+    const dlp = this._filter("lowpass", 280, 0.5);
+    for (const f of [55, 58.27, 82.41]) {
+      const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = f; o.detune.value = rnd(-8, 8);
+      const og = ctx.createGain(); og.gain.value = 0.05; o.connect(og).connect(dlp); o.start();
+    }
+    dlp.connect(this.droneGain); this.droneGain.connect(this.amb);
+    this._houseTimer = setInterval(() => this._houseSound(), 8000);
+  }
+
+  _houseSound() {
+    if (!this.ctx || Math.random() < 0.5 || this.quiet) return;
+    const pos = this.housePos ? this.housePos() : null;
+    const r = Math.random();
+    if (r < 0.35) this.pipes(pos);
+    else if (r < 0.6) this.thump(pos, rnd(0.12, 0.25));
+    else if (r < 0.85) this.creak(pos, rnd(0.4, 0.9), 0.18);
+    else this.windowRattle(pos);
+  }
+
+  setFear(f) {
+    this.fear = Math.max(0, Math.min(1, f));
+    if (this.droneGain) this.droneGain.gain.setTargetAtTime(this.fear * 0.35, this.now, 1.0);
+  }
+  setHum(v) { if (this.humGain) this.humGain.gain.setTargetAtTime(Math.min(1, v), this.now, 0.1); }
+  setWind(v) { if (this.windGain) this.windGain.gain.setTargetAtTime(v, this.now, 0.5); }
+
+  // ---------------- шаги и предметы ----------------
+  footstep(pos, surface = "wood", run = false) {
+    const t = this.now, out = this._out(pos, { wet: 0.2, life: 1 });
+    out.gain.value = run ? 0.7 : 0.45;
+    if (surface === "snow") {
+      for (let i = 0; i < 6; i++) this._burst(out, t + i * 0.012, { f: rnd(1500, 3500), q: 1.5, peak: 0.25, d: 0.03 });
+      this._burst(out, t, { f: 300, q: 0.8, peak: 0.3, d: 0.12, buf: this.brownBuf });
+      return;
+    }
+    const f = { wood: 650, lino: 1100, tile: 2200, carpet: 350, concrete: 900 }[surface] || 650;
+    this._burst(out, t, { f: f * rnd(0.85, 1.15), q: surface === "tile" ? 2.5 : 1.2, peak: surface === "carpet" ? 0.1 : 0.25, a: 0.004, d: 0.08 });
+    this._tone(out, t, { f: 95, f2: 45, peak: 0.3, d: 0.08 });
+    if (surface === "wood" && Math.random() < 0.15) this.creak(pos, rnd(0.25, 0.5), 0.25);
+  }
+
+  creak(pos, dur = 0.8, vol = 0.4, pitch = 1) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(pos, { wet: 0.35, life: dur + 2 }); out.gain.value = vol;
+    const o = ctx.createOscillator(); o.type = "sawtooth";
+    const base = rnd(140, 260) * pitch;
+    o.frequency.setValueAtTime(base, t); o.frequency.linearRampToValueAtTime(base * rnd(0.6, 1.5), t + dur);
+    const am = ctx.createGain(); am.gain.value = 0;
+    const steps = Math.floor(dur * rnd(25, 40));
+    for (let i = 0; i < steps; i++) {
+      const tt = t + (i / steps) * dur;
+      am.gain.setValueAtTime(rnd(0.15, 0.6), tt);
+      am.gain.setValueAtTime(0.02, tt + (dur / steps) * 0.5);
+    }
+    am.gain.setValueAtTime(0, t + dur);
+    const b1 = this._filter("bandpass", 900 * pitch, 4), b2 = this._filter("bandpass", 1900 * pitch, 5);
+    const mix = ctx.createGain(); mix.gain.value = 0.35;
+    o.connect(am); am.connect(b1).connect(mix); am.connect(b2).connect(mix);
+    mix.connect(out); o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  latch(pos, vol = 0.5) {
+    const t = this.now, out = this._out(pos, { wet: 0.2, life: 1 }); out.gain.value = vol;
+    this._burst(out, t, { f: 3200, q: 4, peak: 0.5, d: 0.02 });
+    this._burst(out, t + 0.05, { f: 2400, q: 5, peak: 0.35, d: 0.03 });
+  }
+
+  // разные двери звучат по-разному
+  door(pos, kind = "wood", open = true, speed = 1) {
+    const t = this.now, out = this._out(pos, { wet: 0.4, life: 3 }); out.gain.value = 0.6;
+    if (open) {
+      this.latch(pos, 0.4);
+      if (kind === "metal") { this._tone(out, t + 0.05, { f: 140, f2: 120, type: "triangle", peak: 0.15, d: 0.5 }); this.creak(pos, 0.8, 0.25, 1.6); }
+      else if (kind === "fridge") { this._burst(out, t, { f: 300, q: 0.7, peak: 0.4, d: 0.12, buf: this.brownBuf }); this._burst(out, t + 0.05, { f: 1800, q: 1, peak: 0.12, d: 0.25 }); }
+      else if (kind === "small") { this.creak(pos, 0.35, 0.2, 1.8); }
+      else if (kind === "oven") { this.creak(pos, 0.45, 0.25, 2.6); this._tone(out, t + 0.45, { f: 520, type: "triangle", peak: 0.15, d: 0.3 }); }
+      else if (Math.random() < 0.7 || speed < 1) this.creak(pos, rnd(0.6, 1.3) / Math.max(0.5, speed), 0.4, rnd(0.7, 1.0));
+    } else {
+      if (kind === "fridge") { this._burst(out, t, { f: 180, q: 0.8, peak: 0.6, d: 0.1, buf: this.brownBuf }); return; }
+      if (kind === "oven") { this._tone(out, t, { f: 300, f2: 200, type: "triangle", peak: 0.3, d: 0.2 }); this._burst(out, t, { f: 2500, q: 3, peak: 0.3, d: 0.08 }); return; }
+      this._burst(out, t, { f: 500, q: 0.8, peak: 0.35, d: 0.12, buf: this.brownBuf });
+      this._tone(out, t, { f: kind === "small" ? 160 : 90, f2: 50, peak: 0.35, d: 0.12 });
+      this.latch(pos, 0.35);
+    }
+  }
+
+  doorSlam(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.7, life: 3 }); out.gain.value = 0.9;
+    this._burst(out, t, { f: 900, type: "lowpass", peak: 0.9, d: 0.35, buf: this.brownBuf });
+    this._tone(out, t, { f: 70, f2: 30, peak: 0.7, d: 0.4 });
+    this._burst(out, t + 0.01, { f: 4200, q: 5, peak: 0.25, d: 0.12 });
+  }
+
+  click(pos, vol = 0.4) {
+    const t = this.now, out = this._out(pos, { wet: 0.15, life: 1 }); out.gain.value = vol;
+    this._burst(out, t, { f: 2600, q: 3, peak: 0.5, a: 0.001, d: 0.025 });
+  }
+
+  // советский выключатель: сухой пластиковый щелчок
+  switchClick(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.25, life: 1 }); out.gain.value = 0.55;
+    this._burst(out, t, { f: 3800, q: 2, peak: 0.6, a: 0.001, d: 0.015 });
+    this._tone(out, t, { f: 900, f2: 600, type: "triangle", peak: 0.12, d: 0.03 });
+  }
+
+  knock(pos, count = 3, gap = 0.32) {
+    for (let i = 0; i < count; i++) setTimeout(() => this.ctx && this.thump(pos, 0.7, 180), i * gap * 1000);
+  }
+
+  thump(pos, vol = 0.5, f = 110) {
+    const t = this.now, out = this._out(pos, { wet: 0.45, life: 2 }); out.gain.value = vol;
+    this._tone(out, t, { f, f2: f * 0.5, peak: 0.7, d: 0.13 });
+    this._burst(out, t, { f: f * 2.2, q: 2, peak: 0.4, d: 0.06 });
+  }
+
+  windowRattle(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.4, life: 3 }); out.gain.value = 0.15;
+    for (let i = 0; i < 8; i++) this._burst(out, t + i * rnd(0.04, 0.09), { f: rnd(1800, 3000), q: 6, peak: 0.4, d: 0.03 });
+  }
+
+  pipes(pos) {
+    const ctx = this.ctx, t = this.now, d = rnd(1.5, 3);
+    const out = this._out(pos, { wet: 0.6, life: d + 2 }); out.gain.value = 0.12;
+    const n = this._src(this.brownBuf); const bp = this._filter("bandpass", 300, 9);
+    bp.frequency.setValueAtTime(rnd(150, 300), t); bp.frequency.linearRampToValueAtTime(rnd(400, 900), t + d);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(1, t + 0.3); g.gain.linearRampToValueAtTime(0, t + d);
+    n.connect(bp).connect(g).connect(out); n.start(t); n.stop(t + d);
+  }
+
+  drip(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.6, ref: 0.6, life: 1.5 }); out.gain.value = 0.25;
+    this._tone(out, t, { f: rnd(1100, 1500), f2: 380, peak: 0.4, a: 0.001, d: 0.06 });
+  }
+
+  // ---------------- вода, газ, холодильник ----------------
+  /** Струя воды. kind: tap — в мойку, bath — в ванну (ниже и гулче). Возвращает {stop}. */
+  water(pos, kind = "tap") {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.3, life: 0, ref: 0.8 }); out.gain.value = 0;
+    out.gain.setTargetAtTime(kind === "bath" ? 0.6 : 0.45, this.now, 0.08);
+    // шипение струи
+    const n = this._src(this.noiseBuf, true);
+    const hp = this._filter("bandpass", kind === "bath" ? 1400 : 2600, 0.6);
+    const ng = ctx.createGain(); ng.gain.value = 0.35;
+    n.connect(hp).connect(ng).connect(out); n.start(0, rnd(0, 3));
+    // бульканье: модулированный по амплитуде розовый шум через резонанс
+    const b = this._src(this.pinkBuf, true);
+    const bp = this._filter("bandpass", kind === "bath" ? 420 : 700, 5);
+    const bg = ctx.createGain(); bg.gain.value = 0.3;
+    const lfo = ctx.createOscillator(); lfo.type = "triangle"; lfo.frequency.value = rnd(7, 12);
+    const lg = ctx.createGain(); lg.gain.value = 0.25; lfo.connect(lg).connect(bg.gain); lfo.start();
+    const lfo2 = ctx.createOscillator(); lfo2.frequency.value = 0.4; const l2 = ctx.createGain(); l2.gain.value = 150;
+    lfo2.connect(l2).connect(bp.frequency); lfo2.start();
+    b.connect(bp).connect(bg).connect(out); b.start(0, rnd(0, 3));
+    // пузырьки
+    const bub = setInterval(() => { if (Math.random() < 0.7) this._tone(out, this.now, { f: rnd(500, 1400), f2: rnd(1500, 2600), peak: 0.06, a: 0.002, d: 0.03 }); }, 60);
+    return {
+      stop: () => {
+        clearInterval(bub);
+        out.gain.setTargetAtTime(0, this.now, 0.12);
+        setTimeout(() => { n.stop(); b.stop(); lfo.stop(); lfo2.stop(); out.disconnect(); }, 900);
+        // последние капли
+        for (let i = 0; i < 4; i++) setTimeout(() => this.ctx && this.drip(pos), 300 + i * rnd(250, 600));
+      },
+    };
+  }
+
+  flush(pos) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(pos, { wet: 0.5, life: 9 }); out.gain.value = 0.7;
+    this.latch(pos, 0.5);
+    this._tone(out, t, { f: 300, type: "triangle", peak: 0.1, d: 0.3 });
+    const n = this._src(this.pinkBuf); const bp = this._filter("bandpass", 600, 0.8);
+    bp.frequency.setValueAtTime(1800, t + 0.2); bp.frequency.exponentialRampToValueAtTime(250, t + 3.2);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(1, t + 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
+    n.connect(bp).connect(g).connect(out); n.start(t); n.stop(t + 3.8);
+    // бачок наполняется
+    const r = this._src(this.noiseBuf); const hp = this._filter("bandpass", 3200, 2);
+    const rg = ctx.createGain(); rg.gain.setValueAtTime(0.0001, t + 3); rg.gain.exponentialRampToValueAtTime(0.25, t + 3.5); rg.gain.exponentialRampToValueAtTime(0.0001, t + 8);
+    r.connect(hp).connect(rg).connect(out); r.start(t + 3); r.stop(t + 8.2);
+  }
+
+  gas(pos) {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.15, life: 0, ref: 0.8 }); out.gain.value = 0;
+    // поджиг: тик-тик-тик — пф
+    const t = this.now;
+    for (let i = 0; i < 4; i++) this._burst(out, t + i * 0.12, { f: 4500, q: 3, peak: 0.8, a: 0.001, d: 0.012 });
+    this._burst(out, t + 0.5, { f: 400, q: 0.6, peak: 0.9, d: 0.25, buf: this.brownBuf });
+    out.gain.setValueAtTime(0.5, t);
+    const n = this._src(this.noiseBuf, true); const hp = this._filter("highpass", 2500);
+    const ng = ctx.createGain(); ng.gain.setValueAtTime(0, t); ng.gain.linearRampToValueAtTime(0.12, t + 0.6);
+    n.connect(hp).connect(ng).connect(out); n.start(t, rnd(0, 3));
+    const roar = this._src(this.brownBuf, true); const lp = this._filter("lowpass", 300);
+    const rg = ctx.createGain(); rg.gain.setValueAtTime(0, t); rg.gain.linearRampToValueAtTime(0.3, t + 0.7);
+    roar.connect(lp).connect(rg).connect(out); roar.start(t, rnd(0, 3));
+    return { stop: () => { out.gain.setTargetAtTime(0, this.now, 0.08); setTimeout(() => { n.stop(); roar.stop(); out.disconnect(); }, 600); } };
+  }
+
+  fridgeHum(pos) {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.1, life: 0, ref: 0.8 }); out.gain.value = 0;
+    out.gain.setTargetAtTime(0.35, this.now, 0.3);
+    for (const [f, a] of [[50, 0.5], [100, 0.5], [150, 0.25]]) {
+      const o = ctx.createOscillator(); o.type = "triangle"; o.frequency.value = f;
+      const g = ctx.createGain(); g.gain.value = a * 0.08; o.connect(g).connect(out); o.start();
+      out.osc = (out.osc || []).concat(o);
+    }
+    return { stop: () => { out.gain.setTargetAtTime(0, this.now, 0.2); setTimeout(() => { out.osc.forEach((o) => o.stop()); out.disconnect(); }, 800); } };
+  }
+
+  squeak(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.2, life: 1.5 }); out.gain.value = 0.35;
+    this._tone(out, t, { f: 900, f2: 1400, type: "triangle", peak: 0.3, a: 0.02, d: 0.25 });
+  }
+
+  // ---------------- тело и голоса ----------------
+  heartbeat(rate = 1, vol = 0.6) {
+    const t = this.now;
+    for (const [dt, a] of [[0, 1], [0.28 / rate, 0.7]]) {
+      const out = this._out(null, { wet: 0.03, life: 1.5 }); out.gain.value = vol * a;
+      this._tone(out, t + dt, { f: 62, f2: 34, peak: 0.8, a: 0.01, d: 0.16 });
+    }
+  }
+
+  breath(vol = 0.2, exhale = false, dur = 0.7) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(null, { wet: 0.03, life: dur + 1 }); out.gain.value = vol;
+    const n = this._src(this.pinkBuf);
+    const bp = this._filter("bandpass", exhale ? 900 : 1500, 0.8);
+    bp.frequency.setValueAtTime(exhale ? 1100 : 1200, t); bp.frequency.linearRampToValueAtTime(exhale ? 700 : 1900, t + dur);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(1, t + dur * 0.35); g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    n.connect(bp).connect(g).connect(out); n.start(t, rnd(0, 4)); n.stop(t + dur + 0.05);
+  }
+
+  whisper(pos, dur = 2.2, vol = 0.45) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(pos, { wet: 0.45, ref: 0.5, life: dur + 2, hrtf: true }); out.gain.value = vol;
+    const n = this._src(this.noiseBuf);
+    const vowels = [[700, 1200, 2600], [400, 2000, 2550], [300, 870, 2240], [500, 1700, 2500], [600, 1000, 2400]];
+    const mix = ctx.createGain(); mix.gain.value = 0;
+    const filters = [0, 1, 2].map((i) => { const f = this._filter("bandpass", 1000, 12 - i * 3); n.connect(f).connect(mix); return f; });
+    const sy = Math.floor(dur * 5);
+    for (let i = 0; i < sy; i++) {
+      const tt = t + (i / sy) * dur, v = vowels[Math.floor(Math.random() * vowels.length)];
+      filters.forEach((f, k) => f.frequency.setTargetAtTime(v[k] * rnd(0.9, 1.1), tt, 0.02));
+      mix.gain.setTargetAtTime(rnd(0.4, 1.0), tt, 0.015);
+      mix.gain.setTargetAtTime(0.05, tt + (dur / sy) * 0.6, 0.02);
+    }
+    mix.gain.setTargetAtTime(0, t + dur, 0.05);
+    mix.connect(this._filter("highpass", 500)).connect(out);
+    n.start(t, rnd(0, 3)); n.stop(t + dur + 0.3);
+  }
+
+  // советский телефонный звонок (механический звонок)
+  phoneRing(pos) {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.4, ref: 1.5, life: 0 }); out.gain.value = 0.4;
+    let alive = true;
+    const ringOnce = () => {
+      if (!alive || !this.ctx) return;
+      const t0 = this.now;
+      for (let k = 0; k < 26; k++) {
+        const t = t0 + k * 0.04;
+        for (const [ratio, amp, dec] of [[1, 1, 0.2], [2.76, 0.4, 0.12], [5.4, 0.2, 0.06]]) {
+          this._tone(out, t, { f: (k % 2 ? 940 : 1020) * ratio, peak: amp * 0.12, a: 0.001, d: dec });
+        }
+      }
+    };
+    ringOnce();
+    const id = setInterval(ringOnce, 4000);
+    return { stop: () => { alive = false; clearInterval(id); setTimeout(() => out.disconnect(), 1500); } };
+  }
+
+  dialTone() {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(null, { wet: 0.03, life: 5 }); out.gain.value = 0;
+    const o = ctx.createOscillator(); o.frequency.value = 425; o.connect(out);
+    for (let i = 0; i < 6; i++) { out.gain.setValueAtTime(0.06, t + i * 0.7); out.gain.setValueAtTime(0, t + i * 0.7 + 0.35); }
+    o.start(t); o.stop(t + 4.2);
+  }
+
+  // колыбельная музыкальной шкатулки
+  musicBox(pos, { slow = 1, detune = 0, vol = 0.35, loop = false } = {}) {
+    const out = this._out(pos, { wet: 0.5, ref: 0.8, life: 0 }); out.gain.value = vol;
+    const notes = [76, 79, 83, 81, 79, 76, 74, 76, 0, 72, 76, 79, 77, 76, 74, 71, 0, 76, 79, 83, 84, 83, 79, 81, 79, 76, 0, 74, 72, 71, 72, 76];
+    let alive = true;
+    const play = () => {
+      if (!alive || !this.ctx) return;
+      const t0 = this.now + 0.05;
+      notes.forEach((m, i) => {
+        if (!m) return;
+        const t = t0 + i * 0.32 * slow * (1 + i * 0.004 * slow);
+        const f = 440 * Math.pow(2, (m - 69) / 12) * Math.pow(2, (detune * rnd(-1, 1)) / 1200);
+        for (const [r, a, d] of [[1, 1, 1.2], [4.02, 0.15, 0.2], [2.0, 0.2, 0.5]]) this._tone(out, t, { f: f * r, peak: a * 0.18, a: 0.002, d });
+      });
+      if (loop) setTimeout(play, notes.length * 320 * slow + 1800);
+    };
+    play();
+    return { stop: () => { alive = false; out.gain.setTargetAtTime(0, this.now, 0.2); setTimeout(() => out.disconnect(), 3000); } };
+  }
+
+  radio(pos) {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.3, ref: 1, life: 0 }); out.gain.value = 0.4;
+    const n = this._src(this.noiseBuf, true);
+    const bp = this._filter("bandpass", 2400, 0.6);
+    const ng = ctx.createGain(); ng.gain.value = 0.12;
+    n.connect(bp).connect(ng).connect(out); n.start();
+    const crackle = setInterval(() => { if (Math.random() < 0.4) this.click(pos, 0.1); }, 110);
+    const mb = this.musicBox(pos, { slow: 1.35, detune: 45, vol: 0.22, loop: true });
+    return { stop: () => { clearInterval(crackle); mb.stop(); out.gain.setTargetAtTime(0, this.now, 0.05); setTimeout(() => { n.stop(); out.disconnect(); }, 400); } };
+  }
+
+  tvStatic(pos) {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.25, ref: 1, life: 0 }); out.gain.value = 0.15;
+    const n = this._src(this.noiseBuf, true); n.connect(this._filter("highpass", 900)).connect(out); n.start();
+    return { stop: () => { out.gain.setTargetAtTime(0, this.now, 0.05); setTimeout(() => { n.stop(); out.disconnect(); }, 300); } };
+  }
+
+  bulbPop(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.45, life: 2 }); out.gain.value = 0.55;
+    this._burst(out, t, { f: 2000, type: "highpass", peak: 0.9, d: 0.08 });
+    for (let i = 0; i < 6; i++) this._tone(out, t + 0.05 + Math.random() * 0.5, { f: rnd(3500, 7500), peak: 0.1, a: 0.001, d: 0.05 });
+  }
+
+  // ---------------- машина ----------------
+  starter(pos, ok = false) {
+    const ctx = this.ctx, t = this.now, d = ok ? 1.2 : 1.8;
+    const out = this._out(pos, { wet: 0.2, life: d + 1 }); out.gain.value = 0.55;
+    const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = 38;
+    const am = ctx.createGain(); am.gain.value = 0.3;
+    const lfo = ctx.createOscillator(); lfo.type = "square"; lfo.frequency.setValueAtTime(5, t); lfo.frequency.linearRampToValueAtTime(ok ? 9 : 3.5, t + d);
+    const lg = ctx.createGain(); lg.gain.value = 0.3; lfo.connect(lg).connect(am.gain);
+    o.connect(this._filter("lowpass", 500)).connect(am).connect(out);
+    o.start(t); lfo.start(t); o.stop(t + d); lfo.stop(t + d);
+    this._burst(out, t, { f: 1800, q: 1, peak: 0.15, d: d, rate: 0.5 });
+  }
+
+  engine(pos) {
+    const ctx = this.ctx;
+    const out = this._out(pos, { wet: 0.15, life: 0 }); out.gain.value = 0.0;
+    out.gain.setTargetAtTime(0.4, this.now, 0.3);
+    const oscs = [];
+    for (const [r, a] of [[1, 0.5], [2, 0.3], [3, 0.15]]) {
+      const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = 32 * r;
+      const g = ctx.createGain(); g.gain.value = a * 0.25; o.connect(g).connect(out); o.start(); oscs.push(o);
+    }
+    const lp = this._filter("lowpass", 400);
+    out.disconnect(); out.connect(lp).connect(this.fx);
+    return {
+      rev: (k) => oscs.forEach((o, i) => o.frequency.setTargetAtTime(32 * (i + 1) * k, this.now, 0.4)),
+      stop: () => { out.gain.setTargetAtTime(0, this.now, 0.5); setTimeout(() => oscs.forEach((o) => o.stop()), 3000); },
+    };
+  }
+
+  // ---------------- удары ужаса ----------------
+  sting(kind = "screech", vol = 0.8) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(null, { wet: 0.6, life: 4 }); out.gain.value = vol;
+    if (kind === "screech") {
+      for (let i = 0; i < 5; i++) {
+        const o = ctx.createOscillator(); o.type = "sawtooth";
+        const f = rnd(900, 2200);
+        o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * rnd(0.35, 0.6), t + 1.5);
+        const g = ctx.createGain(); this._env(g.gain, t, 0.01, 0.045, 1.6);
+        o.connect(this._filter("bandpass", f, 1.5)).connect(g).connect(out); o.start(t); o.stop(t + 1.8);
+      }
+    }
+    this._tone(out, t, { f: 80, f2: 28, peak: 0.8, a: 0.005, d: 1.3 });
+    this._burst(out, t, { f: 700, type: "lowpass", peak: 0.7, d: 0.6, buf: this.brownBuf });
+  }
+
+  swell(dur = 3, vol = 0.45) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(null, { wet: 0.7, life: dur + 2 }); out.gain.value = vol;
+    const n = this._src(this.noiseBuf); const bp = this._filter("bandpass", 400, 3);
+    bp.frequency.setValueAtTime(300, t); bp.frequency.exponentialRampToValueAtTime(3000, t + dur);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.6, t + dur); g.gain.setValueAtTime(0, t + dur + 0.01);
+    n.connect(bp).connect(g).connect(out); n.start(t); n.stop(t + dur + 0.05);
+  }
+
+  jointCrack(pos, n = 4) {
+    for (let i = 0; i < n; i++) setTimeout(() => this.ctx && this.click(pos, rnd(0.3, 0.7)), i * rnd(40, 140));
+  }
+
+  rattle(pos, dur = 2.5, vol = 0.5) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(pos, { wet: 0.45, ref: 0.8, life: dur + 1, hrtf: true }); out.gain.value = vol;
+    const n = this._src(this.pinkBuf); const bp = this._filter("bandpass", 520, 2.5);
+    const am = ctx.createGain(); am.gain.value = 0.5;
+    const lfo = ctx.createOscillator(); lfo.type = "square"; lfo.frequency.value = rnd(24, 34);
+    const lg = ctx.createGain(); lg.gain.value = 0.5; lfo.connect(lg).connect(am.gain); lfo.start(t); lfo.stop(t + dur);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(1, t + dur * 0.4); g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    n.connect(bp).connect(am).connect(g).connect(out); n.start(t, rnd(0, 3)); n.stop(t + dur + 0.1);
+  }
+
+  scream(pos, vol = 0.9) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(pos, { wet: 0.5, ref: 2, life: 3, hrtf: true }); out.gain.value = vol;
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) curve[i] = Math.tanh(((i / 512) - 1) * 4);
+    shaper.curve = curve;
+    for (let i = 0; i < 4; i++) {
+      const o = ctx.createOscillator(); o.type = "sawtooth";
+      const f = rnd(260, 520);
+      o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * rnd(1.8, 2.4), t + 0.35);
+      o.frequency.exponentialRampToValueAtTime(f * rnd(1.2, 1.6), t + 1.5);
+      const g = ctx.createGain(); this._env(g.gain, t, 0.03, 0.22, 1.5);
+      o.connect(g).connect(shaper); o.start(t); o.stop(t + 1.8);
+    }
+    this._burst(shaper, t, { f: 1800, q: 1, peak: 0.4, a: 0.02, d: 1.4 });
+    const pk = this._filter("peaking", 900, 2); pk.gain.value = 6;
+    const lp = this._filter("lowpass", 5000);
+    shaper.connect(pk).connect(lp).connect(out);
+  }
+}

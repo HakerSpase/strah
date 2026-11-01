@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Квартира 14</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Neucha&family=PT+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="fade" class="overlay"></div>
+  <div id="flash" class="overlay"></div>
+
+  <div id="hud" class="hidden">
+    <div id="objective"></div>
+    <div id="crosshair"></div>
+    <div id="prompt"></div>
+    <div id="subtitle"></div>
+    <div id="clock">03:33</div>
+    <button id="pause-btn" class="touch-only" aria-label="Пауза">II</button>
+  </div>
+
+  <div id="touch" class="hidden">
+    <div id="stick-zone"><div id="stick-base"><div id="stick-knob"></div></div></div>
+    <div id="look-zone"></div>
+    <button id="t-act" class="tbtn big">Рука</button>
+    <button id="t-light" class="tbtn">Свет</button>
+    <button id="t-run" class="tbtn">Бег</button>
+  </div>
+
+  <div id="note" class="hidden">
+    <div class="paper"><div id="note-text"></div></div>
+    <div class="hint">[E] / нажми — закрыть</div>
+  </div>
+
+  <div id="title" class="screen">
+    <div class="title-inner">
+      <h1>КВАРТИРА 14</h1>
+      <p class="sub">психологический хоррор</p>
+      <div id="loading"><div id="loading-bar"></div></div>
+      <p id="loading-text">загрузка квартиры…</p>
+      <button id="start" class="hidden">Войти</button>
+      <div class="settings hidden" id="settings"></div>
+      <p class="tip desktop-only">Играй в наушниках и в темноте.<br />WASD — идти · Shift — бежать · E — взаимодействовать · F — фонарик · Esc — меню</p>
+      <p class="tip touch-only">Играй в наушниках. Левая половина экрана — идти, правая — смотреть.</p>
+      <p class="credits">разработчик — <a href="https://t.me/w_dtc" target="_blank" rel="noopener">@w_dtc</a></p>
+    </div>
+  </div>
+
+  <div id="intro" class="screen hidden"><div id="intro-text"></div></div>
+
+  <div id="pause" class="screen hidden">
+    <div class="title-inner">
+      <h2>Пауза</h2>
+      <button id="resume">Продолжить</button>
+      <div class="settings" id="pause-settings"></div>
+      <p id="reload-note" class="tip hidden">Новое качество текстур применится после перезапуска. <a href="#" id="reload-link">Перезапустить</a></p>
+      <button id="restart-ch" class="small">Начать главу заново</button>
+      <p class="credits">разработчик — <a href="https://t.me/w_dtc" target="_blank" rel="noopener">@w_dtc</a></p>
+    </div>
+  </div>
+
+  <div id="death" class="screen hidden">
+    <div class="title-inner">
+      <h2 id="death-text">ОНО ТЕБЯ НАШЛО</h2>
+      <button id="retry">Ещё раз</button>
+    </div>
+  </div>
+
+  <div id="ending" class="screen hidden"><div id="ending-text"></div></div>
+  <div id="rotate" class="screen">Поверни телефон горизонтально</div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
