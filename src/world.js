@@ -412,15 +412,14 @@ export class World {
   async _loadHouses(base, meshes) {
     const PI = Math.PI;
     const P = [
-      { f: "house_a", x: 0, y: -37, len: 92, yaw: 0, hide: "Ext_House_S", col: false },
-      { f: "house_b", x: -49, y: 6, len: 86, yaw: PI / 2, hide: "Ext_House_W", col: false },
-      { f: "house_a", x: 41, y: 8, len: 92, yaw: -PI / 2, hide: "Ext_House_E", col: false },
-      // просветы между домами — ещё дома и школа: края карты не видно
-      { f: "school", x: 0, y: 48, len: 48, yaw: 0, col: false },
-      { f: "house_b", x: -38, y: 54, len: 60, yaw: 0, col: false },
-      { f: "house_b", x: 36, y: 56, len: 60, yaw: 0, col: false },
-      { f: "house_b", x: 41, y: -34, len: 24, yaw: -PI / 2, col: false },
-      { f: "house_b", x: -40, y: -36, len: 22, yaw: PI / 2, col: false },
+      // дома ставятся ближней стеной на линию вдоль края двора (near), толщина берётся из самой модели —
+      // так они не залезают во двор и друг в друга. dir: куда от линии уходит дом (+1/-1 по оси axis)
+      { f: "house_a", axis: "y", near: -29.5, dir: -1, along: 0, len: 80, hy: 1.25, yaw: 0, hide: "Ext_House_S", col: false },
+      { f: "house_b", axis: "x", near: -44, dir: -1, along: 4, len: 78, hy: 1.4, yaw: PI / 2, hide: "Ext_House_W", col: false },
+      { f: "house_a", axis: "x", near: 41, dir: 1, along: 3, len: 80, hy: 1.25, yaw: -PI / 2, hide: "Ext_House_E", col: false },
+      { f: "school", axis: "y", near: 42, dir: 1, along: 0, len: 44, yaw: 0, col: false },
+      { f: "house_a", axis: "y", near: 44, dir: 1, along: -52, len: 46, hy: 2.0, yaw: 0, col: false },
+      { f: "house_a", axis: "y", near: 44, dir: 1, along: 50, len: 44, hy: 2.0, yaw: 0, col: false },
       // детская площадка
       { f: "swings", x: -6, y: -18, h: 2.6, yaw: 0 },
       { f: "slide", x: 5, y: -19.5, h: 2.6, yaw: PI / 2 },
@@ -477,7 +476,7 @@ export class World {
         }
       }
       if (!C) continue;
-      const tag = (o.hide || o.f) + "_" + Math.round(o.x) + "_" + Math.round(o.y);
+      const tag = (o.hide || o.f) + "_" + (o.axis ? o.axis + o.near + "_" + o.along : Math.round(o.x) + "_" + Math.round(o.y));
       const bigOne = /^(house_|school)/.test(o.f);       // большие дома склеиваем — копии, не экземпляры
       const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false, { doNotInstantiate: bigOne });
       const holder = new TransformNode(tag, this.scene), inner = new TransformNode(tag + "_fit", this.scene);
@@ -498,6 +497,7 @@ export class World {
       const sx = bb.max.x - bb.min.x, sz = bb.max.z - bb.min.z, sy = bb.max.y - bb.min.y;
       if (o.len && sz > sx) inner.rotation.y = PI / 2;
       inner.scaling.setAll(o.len ? o.len / Math.max(sx, sz) : o.h / Math.max(0.01, sy));
+      if (o.hy) inner.scaling.y *= o.hy;      // панельки в модели приплюснутые: до высоты настоящей пятиэтажки
       bb = bounds();
       inner.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
       let yaw = o.yaw || 0;
@@ -522,12 +522,19 @@ export class World {
           yaw = want - have;
         }
       }
+      if (o.axis) {
+        // толщина дома после масштаба (длинная сторона — по X держателя): центр = линия + половина толщины
+        const depth = bb.max.z - bb.min.z, c = o.near + o.dir * depth / 2;
+        o.x = o.axis === "x" ? c : o.along; o.y = o.axis === "y" ? c : o.along;
+      }
       holder.position.copyFrom(B(o.x, o.y, -6.3));
       holder.rotation.y = yaw;
       if (bigOne) {
         // сотни деталей дома → один объект с несколькими материалами: в разы меньше отрисовок
+        // сперва пересчитать всю цепочку родителей: иначе склейка «запечёт» старое положение и поворот
+        holder.computeWorldMatrix(true);
+        for (const n of holder.getDescendants(false)) n.computeWorldMatrix(true);
         const parts = inner.getChildMeshes(false).filter((m) => m.isEnabled() && m.getTotalVertices() > 0);
-        for (const m of parts) m.computeWorldMatrix(true);
         let merged = null;
         try { merged = Mesh.MergeMeshes(parts, true, true, undefined, false, true); } catch (e) { console.warn("не склеилось", o.f, e); }
         if (merged) { merged.name = tag + "_merged"; merged.isPickable = false; merged.receiveShadows = false; meshes.push(merged); merged.freezeWorldMatrix(); }
