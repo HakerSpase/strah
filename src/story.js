@@ -106,7 +106,7 @@ export class Story {
     for (const [id, note] of Object.entries(NOTES)) {
       this.on(id, "Прочитать", () => {
         ui.showNote(note.text, note.child);
-        this.audio.creak(null, 0.15, 0.1, 3);
+        this.audio.paper(0.4);
         this.flags["read_" + id] = true;
       });
     }
@@ -121,7 +121,9 @@ export class Story {
     this._lockedDoor("Door_Mom", "Заперто. Мамина комната — она всегда её запирала.");
     this._lockedDoor("Door_Closet", "Кладовка. Заперто изнутри?..");
     this._lockedDoor("Door_Kids", "Анина комната. Заперто. Мама так и не открыла её.");
-    this._lockedDoor("Door_Front", this.diff("Заперто. Ключи — в холодильнике, мама писала.", "Заперто. Нужны ключи.", "Заперто."));
+    this._lockedDoor("Door_Front", () => this.flags.read_I_Note2
+      ? this.diff("Заперто. Ключи — в холодильнике, в маслёнке.", "Заперто. Ключи — где-то на кухне.", "Заперто.")
+      : this.diff("Заперто. Ключей не видно. Может, мама оставила записку?", "Заперто. Нужны ключи.", "Заперто."));
     this._lockedDoor("Door_Outer", "Не поддаётся.");
     // --- холодильник ---
     this.on("Fridge_Door", "Открыть холодильник", () => {
@@ -172,15 +174,17 @@ export class Story {
   }
 
   _door(name, pair, what) {
-    const lbl = (o) => (what ? (o ? "Закрыть " : "Открыть ") + what : o ? "Закрыть" : "Открыть");
-    this.on(name, lbl(false), () => {
-      const open = !this.world.doorOpen(name);
-      this.world.setDoor(name, open);
-      if (pair) this.world.setDoor(pair, open, { silent: true });
-      this.handlers[name].label = lbl(open);
-      if (pair && this.handlers[pair]) this.handlers[pair].label = lbl(open);
-      this.flags["opened_" + name] = open;
-    });
+    const w = this.world;
+    // подпись считается по текущему состоянию двери — даже если её открыл сюжет, ветер или сущность
+    this.handlers[name] = {
+      get label() { const o = w.doorOpen(name); return what ? (o ? "Закрыть " : "Открыть ") + what : o ? "Закрыть" : "Открыть"; },
+      use: () => {
+        const open = !w.doorOpen(name);
+        w.setDoor(name, open);
+        if (pair) w.setDoor(pair, open, { silent: true });
+        this.flags["opened_" + name] = open;
+      },
+    };
   }
 
   _lockedDoor(name, msg) {
@@ -188,7 +192,7 @@ export class Story {
       const p = this.world.doorPos(name);
       this.audio.latch(p, 0.6); setTimeout(() => this.audio.latch(p, 0.5), 140);
       this.audio.thump(p, 0.2, 160);
-      ui.say(msg, { sec: 3 });
+      ui.say(typeof msg === "function" ? msg() : msg, { sec: 3 });
     });
   }
 
@@ -533,7 +537,22 @@ export class Story {
     a.doorSlam(w.doorPos("Door_Loggia"));
     w.setOutside({ storm: 2 });
     ui.say("Грохот на кухне. Ветер распахнул балкон.", { sec: 3.5 });
-    this.goal("Закрыть балконную дверь на кухне", "дверь на лоджию — на кухне, рядом с окном");
+    this.goal("Закрыть балконную дверь на кухне", "дверь на лоджию — на кухне, рядом с окном", "Балкон");
+    // пока записка не прочитана — не закрывается (на стуле листок); изнутри лоджии закрыть нельзя
+    this.handlers.Door_Loggia = {
+      get label() { return w.doorOpen("Door_Loggia") ? "Закрыть балкон" : "Открыть балкон"; },
+      use: () => {
+        const open = w.doorOpen("Door_Loggia");
+        if (open && !this.flags.read_I_Note8) {
+          ui.say("Стоп. На балконе, на стуле — листок. Мамин почерк.", { sec: 3.5 });
+          this.flags.noteHint = true;
+          this.goal("На балконе, на стуле — мамина записка", "выйди на лоджию: листок лежит на стуле", "Листок на балконе");
+          return;
+        }
+        if (open && this.inRoom("loggia")) { ui.say("Сначала вернуться на кухню. Не запирать же себя на морозе.", { sec: 3.5 }); return; }
+        w.setDoor("Door_Loggia", !open);
+      },
+    };
     await until(() => this.inRoom("loggia"), tk);
     // во дворе под фонарём — оно
     const spot = this.world.nodes.Watcher_Spot ? this.world.pos("Watcher_Spot") : B(0.2, -14.2, -6.3);
@@ -545,12 +564,15 @@ export class Story {
     e.showWatcher(spot, B(0.5, -4.6, 0));
     await until(() => { if (lookOut()) wSeen += 1 / 60; return wSeen > 1.2 || this.flags.read_I_Note8; }, tk);
     if (wSeen > 1.2) { ui.say("Во дворе… под фонарём. Оно смотрит прямо на меня.", { sec: 4 }); a.heartbeat(1.5, 0.7); }
-    this.goal("Записка на стуле. Потом — закрыть балкон");
+    if (!this.flags.read_I_Note8) this.goal("Записка на стуле", "листок лежит на стуле на лоджии", "Записка");
     await until(() => this.flags.read_I_Note8 && !ui.noteOpen, tk);
+    this.goal("Зайти на кухню и закрыть балкон", "встань на кухне у балконной двери и закрой её [E]", "Закрыть балкон");
     await until(() => !w.doorOpen("Door_Loggia") && !this.inRoom("loggia"), tk);
     e.showWatcher(null);
     w.setOutside({ storm: 1.4 });
-    this.goal("Входная дверь");
+    this._door("Door_Loggia");
+    a.heartbeat(1.2, 0.5);
+    this.goal("Уходить. Входная дверь", "из кухни налево по коридору до конца — обитая дерматином дверь", "Выход");
     await this.throughVestibule(tk, 3);
   }
 

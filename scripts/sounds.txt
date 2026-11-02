@@ -1,0 +1,30 @@
+wind 1172 1275
+drone 3081 2749
+roomtone 3080
+radio_static 1448
+musicbox 700
+door_open 195 190
+door_close 189
+door_slam 194 196
+knock 197
+creak 179 338 177 176 178 339
+phone_ring 1357
+breath 2232
+growl 1956 2234 2240
+scream 307 1963
+bones 2937
+sting 773 2905 2917
+boom 565 1143
+riser 2914 1445
+tv_static 1447
+switch 2579 2585 1808
+water_tap 1892
+water_bath 1876
+drip 1879
+flush 1871
+gas 1831
+fridge 1866
+squeak 1014
+car_start_fail 1540
+car_start 1559
+paper 2380 1104
