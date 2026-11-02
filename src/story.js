@@ -80,6 +80,7 @@ export class Story {
     const tk = (this.token = new Token());
     this.loop = n;
     this.dead = false;
+    this.loopStart = clock.t;
     this.setup(n);
     // автосохранение: игра продолжится с начала этой главы (и на телефоне тоже — хранится в браузере)
     try { localStorage.setItem("k14-save", JSON.stringify({ chapter: n, at: Date.now() })); } catch (e) {}
@@ -265,6 +266,7 @@ export class Story {
     const p = this.player, e = this.entity;
     if (this.token) this.token.cancel();
     e.state = "attack";
+    if (ui.noteOpen) ui.hideNote();
     p.frozen = true;
     const front = p.position.add(p.forward().multiplyByFloats(1, 0, 1).normalize().scale(0.9));
     e.place(new Vector3(front.x, p.position.y, front.z), 0, "Attack");
@@ -288,6 +290,17 @@ export class Story {
     this.runLoop(this.loop);
   }
 
+  // честное нападение: только активная охота, рядом, по одной высоте, не в первые секунды главы,
+  // не когда игрок заперся в укрытии и не пока на экране записка
+  _canBeCaught() {
+    const e = this.entity, p = this.player;
+    if (!e.visible || !/chase|stalk|hunt/.test(e.state) || e.atDoor) return false;
+    if (clock.t - (this.loopStart || 0) < 3 || ui.noteOpen || p.frozen || p.mount) return false;
+    if (Math.abs(e.pos.y - p.position.y) > 1.2) return false;
+    if (this.inRoom("closet") && !this.world.doorOpen("Door_Closet")) return false;
+    return true;
+  }
+
   // стена или закрытая дверь между игроком и сущностью
   _wallBetween() {
     const a = this.entity.chest(), b = this.player.camera.position;
@@ -301,7 +314,7 @@ export class Story {
     this.fear += (this.fearTarget - this.fear) * Math.min(1, dt * 0.5);
     const e = this.entity;
     const reach = this.diff(0.95, 1.1, 1.3);
-    if (!this.dead && e.visible && /chase|stalk|hunt/.test(e.state) && e.distToPlayer() < reach && !e.atDoor && !this._wallBetween()) this.attack();
+    if (!this.dead && this._canBeCaught() && e.distToPlayer() < reach && !this._wallBetween()) this.attack();
     // близость сущности — страх и сердце растут сами
     if (e.visible && /chase|hunt/.test(e.state)) this.fear = Math.max(this.fear, Math.min(1, 1.2 - e.distToPlayer() * 0.08));
     if (this._goal && !this._goal.shown && this._goal.hint && clock.t - this._goal.t > 60) {

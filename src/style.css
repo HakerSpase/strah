@@ -129,3 +129,6 @@ body.touch #light-ind { top: 84px; right: 18px; }
 #dev-info { margin-top: 6px; color: #9a9; white-space: pre; }
 #fps { position: fixed; z-index: 49; right: 8px; bottom: 8px; font: 11px monospace; color: #8f8; background: rgba(0,0,0,0.5); padding: 3px 6px; pointer-events: none; white-space: pre; }
 #objective .hint-line { display: block; margin-top: 4px; font-size: 0.82em; opacity: 0.7; }
+#dev-lock input { width: 120px; background: #111; color: #ddd; border: 1px solid #5a1010; padding: 4px 6px; font: 13px monospace; }
+#dev-lock button { margin: 0; padding: 4px 10px; }
+#dev-lock.bad input { border-color: #f33; }

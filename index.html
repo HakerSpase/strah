@@ -81,11 +81,14 @@
   <!-- меню разработчика: F2 или Ctrl+Shift+D на компе; на телефоне — удержать кнопку паузы или 5 раз коснуться заголовка -->
   <div id="dev" class="hidden">
     <div class="dev-head">DEV <button id="dev-close" class="small">×</button></div>
+    <div id="dev-lock"><input id="dev-pass" type="password" inputmode="numeric" placeholder="код" autocomplete="off" /> <button id="dev-ok" class="small">ок</button></div>
+    <div id="dev-body" class="hidden">
     <div class="dev-grid" id="dev-chapters"></div>
     <label><input type="checkbox" id="dev-god" /> бессмертие</label>
     <label><input type="checkbox" id="dev-fast" /> бег ×2</label>
     <label><input type="checkbox" id="dev-fps" /> FPS и позиция</label>
     <div id="dev-info"></div>
+    </div>
   </div>
   <div id="fps" class="hidden"></div>
   <div id="rotate" class="screen">Поверни телефон горизонтально</div>

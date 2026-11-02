@@ -451,9 +451,26 @@ function devJump(n, sub) {
   lockPointer();
 }
 window.game.devJump = devJump;
+// меню закрыто простым кодом, чтобы случайный игрок не прыгал по главам
+const DEV_CODE = "1414";
+let devOpen = false;
+try { devOpen = sessionStorage.getItem("k14-dev") === "1"; } catch (e) {}
+function unlockDev() {
+  if ($("dev-pass").value.trim() !== DEV_CODE) { $("dev-lock").classList.add("bad"); $("dev-pass").value = ""; return; }
+  devOpen = true;
+  try { sessionStorage.setItem("k14-dev", "1"); } catch (e) {}
+  $("dev-lock").classList.add("hidden"); $("dev-body").classList.remove("hidden");
+  buildDev();
+}
+$("dev-ok").addEventListener("click", unlockDev);
+$("dev-pass").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") unlockDev(); });
 function toggleDev(v = $("dev").classList.contains("hidden")) {
   $("dev").classList.toggle("hidden", !v);
-  if (v) { buildDev(); if (document.pointerLockElement) document.exitPointerLock(); }
+  if (!v) return;
+  if (document.pointerLockElement) document.exitPointerLock();
+  $("dev-lock").classList.toggle("hidden", devOpen); $("dev-lock").classList.remove("bad");
+  $("dev-body").classList.toggle("hidden", !devOpen);
+  if (devOpen) buildDev(); else setTimeout(() => $("dev-pass").focus(), 50);
 }
 window.addEventListener("keydown", (e) => {
   if (e.code === "F2" || (e.ctrlKey && e.shiftKey && e.code === "KeyD")) { e.preventDefault(); toggleDev(); }

@@ -82,6 +82,7 @@ export class World {
     if (this.doors.Fridge_Door) this.doors.Fridge_Door.max = 1.3;
     // кладовка узкая: дверь открывается в коридор, иначе изнутри её не закрыть
     if (this.doors.Door_Closet) { this.doors.Door_Closet.dir = 1; this.doors.Door_Closet.max = 1.45; }
+    await this._loadInterior(base);
     this._setupMirrors();
     this._setupProps();
     this.tvTex = new DynamicTexture("tvsnow", { width: 128, height: 96 }, scene, false);
@@ -92,6 +93,60 @@ export class World {
       if (top && /_Furniture$|^Architecture$|^Colliders$/.test(top.name)) { mesh.freezeWorldMatrix(); mesh.doNotSyncBoundingInfo = true; }
     }
     return c;
+  }
+
+  // Модель в коробку: длинная сторона/высота/толщина под заданные размеры, низ на ноль.
+  _fit(C, tag, { w, h, d, len } = {}) {
+    const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false);
+    const holder = new TransformNode(tag, this.scene), inner = new TransformNode(tag + "_fit", this.scene);
+    for (const rn of inst.rootNodes) rn.parent = inner;
+    inner.parent = holder;
+    const vis = () => inner.getChildMeshes(false).filter((m) => m.getTotalVertices() > 0);
+    const bounds = () => {
+      holder.computeWorldMatrix(true); inner.computeWorldMatrix(true);
+      let mn = new Vector3(1e9, 1e9, 1e9), mx = new Vector3(-1e9, -1e9, -1e9);
+      for (const m of vis()) { m.computeWorldMatrix(true); const b = m.getBoundingInfo().boundingBox; mn = Vector3.Minimize(mn, b.minimumWorld); mx = Vector3.Maximize(mx, b.maximumWorld); }
+      return { min: mn, max: mx };
+    };
+    let bb = bounds();
+    const ax = bb.max.x - bb.min.x, az = bb.max.z - bb.min.z, sy = bb.max.y - bb.min.y;
+    const turn = (w && d && ax < az) || (len && az > ax);       // длинная сторона — по X держателя
+    if (turn) inner.rotation.y = Math.PI / 2;
+    // масштаб задаётся в осях самой модели (до поворота)
+    if (w && h && d) inner.scaling.set((turn ? d : w) / ax, h / sy, (turn ? w : d) / Math.max(0.001, az));
+    else inner.scaling.setAll(len ? len / Math.max(ax, az) : h / sy);
+    bb = bounds();
+    inner.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+    return holder;
+  }
+
+  // квартира: настоящие двери, ванна, унитаз, чугунные батареи (Sketchfab)
+  async _loadInterior(base) {
+    const load = async (f) => { try { const C = await LoadAssetContainerAsync(base + f + ".glb", this.scene); for (const m of C.materials) m.maxSimultaneousLights = this.lampK + 3; return C; } catch (e) { console.warn("нет модели", f, e); return null; } };
+    const [door, tub, wc, rad] = await Promise.all(["door", "bathtub", "toilet", "radiator"].map(load));
+    const all = [];
+    // двери: новое полотно садится на петлю старого, старое невидимо, но держит столкновения
+    if (door) for (const name of ["Door_Bedroom", "Door_Mom", "Door_Bath", "Door_Closet", "Door_Kids", "Door_WC", "Door_Loggia"]) {
+      const D = this.doors[name]; if (!D) continue;
+      const ex = (D.node.metadata && D.node.metadata.gltf && D.node.metadata.gltf.extras) || {};
+      const w = ex.width || 0.8;
+      const old = this.meshesOf(name);
+      const hold = this._fit(door, "rd_" + name, { w, h: 1.995, d: 0.045 });
+      hold.parent = D.node;
+      hold.position.set(w / 2, 0.005, 0);
+      for (const m of old) m.isVisible = false;
+      for (const m of hold.getChildMeshes(false)) { m.metadata = { id: name }; m.isPickable = true; m.receiveShadows = !this.mobile; all.push(m); }
+    }
+    const put = (C, tag, opts, x, y, yaw = 0) => {
+      if (!C) return;
+      const hold = this._fit(C, tag, opts);
+      hold.position.copyFrom(B(x, y, 0)); hold.rotation.y = yaw;
+      for (const m of hold.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = !this.mobile; all.push(m); m.freezeWorldMatrix(); }
+    };
+    put(tub, "rtub", { len: 1.74 }, -2.39, 7.31, Math.PI / 2);
+    put(wc, "rwc", { h: 0.78 }, -1.4, 9.88, 0);
+    for (const [x, y, yaw] of [[0, -4.25, 0], [-4.25, 3.2, Math.PI / 2], [3.85, 2.2, -Math.PI / 2]]) put(rad, "rrad_" + x + "_" + y, { len: 0.9 }, x, y, yaw);
+    this.interiorMeshes = all;
   }
 
   _top(mesh) {
