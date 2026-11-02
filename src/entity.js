@@ -36,13 +36,28 @@ export class Entity {
   }
 
   async load(base = "/models/") {
-    const c = await LoadAssetContainerAsync(base + "entity.glb", this.scene);
+    // модель: SCP-096 (Mm123, Sketchfab, CC BY-SA 4.0) — бледный, длиннорукий, рот до ушей
+    const c = await LoadAssetContainerAsync(base + "monster.glb", this.scene);
+    // имена его анимаций → наши
+    const MAP = { "C.096_DIdle.F": "Idle", "C.096_DWlk.F - Forward": "Walk", "C.096_ARun.F - Forward": "Run",
+      "C.096_ASwp1.F": "Attack", "C.096_AIdle.F": "Peek", "C.096_AGate.F": "Scratch" };
+    for (const g of c.animationGroups) if (MAP[g.name]) g.name = MAP[g.name];
+    for (const g of [...c.animationGroups]) if (!Object.values(MAP).includes(g.name)) { c.animationGroups.splice(c.animationGroups.indexOf(g), 1); g.dispose(); }
     // «наблюдатель» — вторая копия (со своими материалами): стоит во дворе под фонарём
     const inst = c.instantiateModelsToScene((n) => "W_" + n, true);
     c.addAllToScene();
     this.holder = new TransformNode("entity", this.scene);
     const root = c.meshes.find((m) => m.name === "__root__");
     root.parent = this.holder;
+    // рост 2.5 м, ступни на полу
+    this.holder.computeWorldMatrix(true);
+    let bb = root.getHierarchyBoundingVectors(true);
+    const k = 2.5 / Math.max(0.01, bb.max.y - bb.min.y);
+    root.scaling.scaleInPlace(k);
+    root.computeWorldMatrix(true);
+    bb = root.getHierarchyBoundingVectors(true);
+    root.position.y -= bb.min.y - this.holder.position.y;
+    this.fit = { scaling: root.scaling.clone(), y: root.position.y };
     this.meshes = c.meshes.filter((m) => m !== root);
     for (const m of this.meshes) {
       m.isPickable = false;
@@ -61,16 +76,17 @@ export class Entity {
     for (const g of c.animationGroups) { g.stop(); this.anims[g.name] = g; }
     this.watcher = new TransformNode("watcher", this.scene);
     inst.rootNodes[0].parent = this.watcher;
+    inst.rootNodes[0].scaling.copyFrom(this.fit.scaling); inst.rootNodes[0].position.y = this.fit.y;
     for (const m of this.watcher.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; if (m.material) m.material.fogEnabled = false; }
     this.watcherAnims = inst.animationGroups;
     for (const g of this.watcherAnims) g.stop();
-    const idle = this.watcherAnims.find((g) => /Idle/.test(g.name));
+    const idle = this.watcherAnims.find((g) => /DIdle|^W?_?Idle$/.test(g.name)) || this.watcherAnims.find((g) => /Idle/.test(g.name));
     if (idle) idle.start(true, 0.8);
     this.watcher.setEnabled(false);
     // кости головы и челюсти — для резких «ломаных» подёргиваний поверх анимации
     const nodes = this.holder.getDescendants(false);
-    this.headNode = nodes.find((n) => n.name === "head");
-    this.jawNode = nodes.find((n) => n.name === "jaw");
+    this.headNode = nodes.find((n) => /^head$|head/i.test(n.name) && !/end|top/i.test(n.name));
+    this.jawNode = nodes.find((n) => /jaw/i.test(n.name));
     this.scene.onAfterAnimationsObservable.add(() => this._twitch());
     this.hide();
   }
