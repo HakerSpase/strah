@@ -1,11 +1,11 @@
-import { LoadAssetContainerAsync, TransformNode, Vector3 } from "@babylonjs/core";
+import { LoadAssetContainerAsync, Quaternion, TransformNode, Vector3 } from "@babylonjs/core";
 import { B, rnd } from "./util.js";
 
 // граф путей по квартире (координаты Blender)
 const NAV = {
   bedC: [0, -2.2], bedDoor: [0, -0.35], c0: [0, 0.6], c1: [0, 2.0], c2: [0, 3.05], c3: [0, 4.95], c4: [0, 6.4],
   c5: [0, 7.6], c6: [0, 8.8], c7: [0, 10.0], c8: [0, 11.4], vest: [0, 12.8],
-  momDoor: [-1.1, 3.05], momC: [-2.4, 3.2], closetDoor: [1.1, 4.95], closetC: [1.4, 5.0],
+  momDoor: [-1.1, 3.05], momC: [-2.4, 3.2], closetDoor: [1.3, 4.95], closetC: [1.45, 5.3],
   bathDoor: [-1.1, 7.6], bathC: [-1.7, 7.6], kitDoor: [1.2, 8.8], kitC: [2.3, 9.4],
   kidsDoor: [1.1, 1.72], kidsC: [2.2, 2.0], wcDoor: [-1.1, 9.47], wcC: [-1.4, 9.5],
   logDoor: [3.7, 10.8], logC: [4.65, 9.5], stairL: [0, 14.0],
@@ -30,6 +30,9 @@ export class Entity {
     for (const [a, b] of EDGES) { (this.adj[a] ||= []).push(b); (this.adj[b] ||= []).push(a); }
     this.nav = Object.fromEntries(Object.entries(NAV).map(([k, [x, y]]) => [k, B(x, y, 0)]));
     this.crackT = 0;
+    this.blocked = new Set();      // двери, которые оно не может открыть (игрок держит / заперлись)
+    this.atDoor = null;            // упёрлось в закрытую дверь из blocked
+    this.twitch = { t: 0, k: 0, q: Quaternion.Identity() };
   }
 
   async load(base = "/models/") {
@@ -60,7 +63,32 @@ export class Entity {
     const idle = this.watcherAnims.find((g) => /Idle/.test(g.name));
     if (idle) idle.start(true, 0.8);
     this.watcher.setEnabled(false);
+    // кости головы и челюсти — для резких «ломаных» подёргиваний поверх анимации
+    const nodes = this.holder.getDescendants(false);
+    this.headNode = nodes.find((n) => n.name === "head");
+    this.jawNode = nodes.find((n) => n.name === "jaw");
+    this.scene.onAfterAnimationsObservable.add(() => this._twitch());
     this.hide();
+  }
+
+  _twitch() {
+    if (!this.visible || !this.headNode || !this.headNode.rotationQuaternion || this.wasFrozen) return;
+    const T = this.twitch, dt = this.scene.getEngine().getDeltaTime() / 1000;
+    T.t -= dt;
+    const calm = this.state === "hidden" || this.state === "attack";
+    if (T.t <= 0) {
+      T.t = calm ? 99 : rnd(0.35, 2.2);
+      const a = rnd(0.25, 0.7) * (Math.random() < 0.5 ? -1 : 1);
+      T.q = Quaternion.RotationYawPitchRoll(rnd(-0.3, 0.3) * a, rnd(-0.4, 0.4) * a, a);
+      T.k = 1;
+      if (this.audio.ctx && Math.random() < 0.5) this.audio.jointCrack(this.headXYZ(), 2);
+    }
+    if (T.k <= 0.001) return;
+    // рывок мгновенный, возврат — медленный: так двигаются сломанные вещи
+    T.k = Math.max(0, T.k - dt * 2.2);
+    const q = Quaternion.Slerp(Quaternion.Identity(), T.q, T.k * T.k);
+    this.headNode.rotationQuaternion.multiplyInPlace(q);
+    if (this.jawNode && this.jawNode.rotationQuaternion) this.jawNode.rotationQuaternion.multiplyInPlace(Quaternion.RotationAxis(new Vector3(1, 0, 0), 0.35 * T.k));
   }
 
   showWatcher(p, faceTo) {
@@ -80,7 +108,7 @@ export class Entity {
 
   pause(p) { const g = this.anims[this.cur]; if (g) p ? g.pause() : g.play(g.loopAnimation); }
 
-  hide() { this.holder.setEnabled(false); this.state = "hidden"; for (const k in this.anims) this.anims[k].stop(); this.cur = null; }
+  hide() { this.holder.setEnabled(false); this.state = "hidden"; this.atDoor = null; this.goal = null; this.wasFrozen = false; for (const k in this.anims) this.anims[k].stop(); this.cur = null; }
 
   place(p, yaw = 0, anim = "Idle") {
     this.holder.setEnabled(true);
@@ -131,9 +159,35 @@ export class Entity {
   // «не смотри на него»: двигается, только когда игрок не смотрит
   stalk(speed = 1.4) { this.state = "stalk"; this.speed = speed; this.play("Walk", 1); this.repath = 0; }
 
+  // охота: идёт на игрока всегда; свет фонарика в лицо его тормозит, вблизи — бросок
+  hunt(speed = 1.8) { this.state = "hunt"; this.speed = speed; this.baseSpeed = speed; this.play("Walk", 1.2); this.repath = 0; }
+
+  // упёрлось в дверь: скребётся и дёргает ручку
+  _atDoor(dt) {
+    this.play(this.anims.Scratch ? "Scratch" : "Idle", 1);
+    this.scratchT = (this.scratchT || 0) - dt;
+    if (this.scratchT <= 0 && this.audio.ctx) {
+      this.scratchT = rnd(0.9, 2.4);
+      const p = this.world.doorPos(this.atDoor);
+      const r = Math.random();
+      if (r < 0.45) this.audio.scratch(p, rnd(0.8, 1.8));
+      else if (r < 0.75) this.audio.handleRattle(p);
+      else this.audio.thump(p, 0.55, 120);
+    }
+  }
+
   update(dt, t) {
     if (!this.visible) return;
-    if (this.state === "chase" || this.state === "stalk") {
+    if (this.state === "hunt") {
+      const lit = this.player.litByFlashlight(this.chest()) && this.seen(0.5);
+      const d = this.distToPlayer();
+      const want = (lit ? 0.45 : 1) * this.baseSpeed * (d < 3.2 && !lit ? 1.45 : 1);
+      this.speed += (want - this.speed) * Math.min(1, dt * 4);
+      if (!this.atDoor) this.play(this.speed > 2.2 ? "Run" : "Walk", this.speed > 2.2 ? 1.1 : 0.7 + this.speed * 0.3);
+      if (lit && !this.wasLit && this.audio.ctx) this.audio.rattle(this.headXYZ(), 1.2, 0.55);
+      this.wasLit = lit;
+    }
+    if (this.state === "chase" || this.state === "stalk" || this.state === "hunt") {
       const frozen = this.state === "stalk" && this.seen(0.7);
       if (this.state === "stalk") {
         if (frozen !== this.wasFrozen) {
@@ -143,6 +197,7 @@ export class Entity {
         this.wasFrozen = frozen;
       }
       if (!frozen) this._move(dt);
+      if (this.atDoor) this._atDoor(dt);
       // хруст суставов и хрип
       this.crackT -= dt;
       if (this.crackT <= 0) {
@@ -157,10 +212,12 @@ export class Entity {
   _move(dt) {
     // на улице граф квартиры не нужен — идём прямо
     if (this.player.position.y < -3) {
-      const d = this.player.position.subtract(this.pos); d.y = 0;
+      this.atDoor = null;
+      const d = (this.goal || this.player.position).subtract(this.pos); d.y = 0;
       const len = d.length();
       if (len > 0.01) { const step = Math.min(len, this.speed * dt); this.pos.addInPlace(d.scale(step / len)); this.faceTo(this.pos.add(d), Math.min(1, dt * 8)); }
-      this.pos.y = this.player.position.y;
+      this.pos.y = -6.3;
+      this._steps(Math.min(len, this.speed * dt), "snow");
       return;
     }
     this.repath -= dt;
@@ -170,16 +227,28 @@ export class Entity {
     }
     let target = this.player.position;
     // идём к первому узлу пути, если он не позади нас
+    const doorOn = (a, b) => DOOR_ON[`${a}-${b}`] || DOOR_ON[`${b}-${a}`];
     while (this.path.length > 1) {
       const n = this.nav[this.path[0]];
+      const dn = doorOn(this.path[0], this.path[1]);
+      // за запертую дверь не проходим: держимся у неё
+      if (dn && this.blocked.has(dn) && !this.world.doorOpen(dn)) break;
       if (Math.hypot(n.x - this.pos.x, n.z - this.pos.z) < 0.35) this.path.shift(); else break;
     }
     if (this.path.length > 1) target = this.nav[this.path[0]];
-    // открыть дверь на пути
+    // дверь на пути: обычную распахивает, через запертую (blocked) пройти не может
+    this.atDoor = null;
     if (this.path.length > 1) {
       const key1 = `${this.path[0]}-${this.path[1]}`, key2 = `${this.path[1]}-${this.path[0]}`;
       const dname = DOOR_ON[key1] || DOOR_ON[key2];
-      if (dname && !this.world.doorOpen(dname)) this.world.setDoor(dname, true, { speed: 9 });
+      if (dname && this.blocked.has(dname) && !this.world.doorOpen(dname)) {
+        const n = this.nav[this.path[0]];
+        if (Math.hypot(n.x - this.pos.x, n.z - this.pos.z) < 0.4) {
+          this.atDoor = dname;
+          const dp = this.world.doorPos(dname); this.faceTo(new Vector3(dp.x, 0, dp.z), Math.min(1, dt * 6));
+          return;
+        }
+      } else if (dname && !this.world.doorOpen(dname)) this.world.setDoor(dname, true, { speed: 9 });
     }
     const d = target.subtract(this.pos); d.y = 0;
     const len = d.length();
@@ -187,13 +256,17 @@ export class Entity {
       const step = Math.min(len, this.speed * dt);
       this.pos.addInPlace(d.scale(step / len));
       this.faceTo(this.pos.add(d), Math.min(1, dt * 8));
-      // шаги сущности: тяжёлые, волочащиеся
-      this.stepT = (this.stepT || 0) - step;
-      if (this.stepT <= 0) {
-        this.stepT = this.state === "chase" ? 0.9 : 0.75;
-        const p = this.pos; this.audio.footstep({ x: p.x, y: 0.1, z: p.z }, "wood", this.state === "chase");
-        if (Math.random() < 0.3) this.audio.creak({ x: p.x, y: 0.1, z: p.z }, 0.4, 0.3, 0.7);
-      }
+      this._steps(step, "wood");
     }
+  }
+
+  // шаги сущности: тяжёлые, волочащиеся, с хрустом
+  _steps(step, surface) {
+    this.stepT = (this.stepT || 0) - step;
+    if (this.stepT > 0 || !this.audio.ctx) return;
+    const fast = this.speed > 2.2;
+    this.stepT = fast ? 0.95 : 0.78;
+    const p = this.pos, at = { x: p.x, y: p.y + 0.1, z: p.z };
+    this.audio.monsterStep(at, surface, fast);
   }
 }

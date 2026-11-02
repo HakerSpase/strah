@@ -197,15 +197,73 @@ CD.finish()
 empty("Car_Seat", (5.0 - 0.35, -9.5 - 0.45, G + 1.12), 0.0, col)
 empty("Car_Headlights", (5.0, -9.5 + 2.1, G + 0.65), 0.0, col)
 
+# сугроб, в котором увязла «копейка»
+CDR = Builder("Ext_CarDrift", origin=(5.0, -9.5, G), collection=col)
+for sy in (-1.3, 1.3):
+    for sx in (-0.82, 0.82):
+        CDR.soft_box((5.0 + sx - 0.35, -9.5 + sy - 0.55, G - 0.1), (5.0 + sx + 0.35, -9.5 + sy + 0.55, G + 0.5), "Snow", cuts=5, round_=0.9, noise_amp=0.05, seed=int(sx * 10 + sy * 3))
+CDR.soft_box((5.0 - 1.4, -9.5 - 2.4, G - 0.1), (5.0 + 1.4, -9.5 + 2.4, G + 0.28), "Snow", cuts=6, round_=0.9, noise_amp=0.06, seed=11)
+CDR.finish()
+
+# машина, которая проезжает по улице и не останавливается
+PC = Builder("Ext_PassCar", origin=(12.0, -200.0, G), collection=col)
+car(PC, 12.0, -200.0, 0, "CarGreen", snow=True)
+for sx in (-0.55, 0.55):
+    PC.box((12.0 + sx - 0.12, -200.0 + 2.05, G + 0.58), (12.0 + sx + 0.12, -200.0 + 2.09, G + 0.7), "EntranceLamp")
+PC.finish()
+
+# таксофон-автомат у дорожки
+TP = Builder("I_Payphone", origin=(-7.5, -12.2, G), collection=col)
+TP.box((-7.55, -12.25, G), (-7.45, -12.15, G + 1.2), "PipeGreen")
+TP.box((-7.85, -12.35, G + 1.1), (-7.15, -12.05, G + 2.2), "Rust", bevel=0.02)
+TP.box((-7.8, -12.05, G + 1.15), (-7.2, -12.0, G + 2.15), "PipeGreen", bevel=0.01)
+TP.box((-7.66, -11.99, G + 1.45), (-7.34, -11.95, G + 1.9), "Metal", bevel=0.01)
+TP.box((-7.62, -11.95, G + 1.75), (-7.52, -11.88, G + 1.88), "Black", bevel=0.01)
+TP.cyl((-7.4, -11.92, G + 1.6), 0.03, 0.25, "Black", segs=8)
+TP.box((-7.85, -12.35, G + 2.2), (-7.15, -12.0, G + 2.3), "Snow")
+TP.finish()
+
 # ---------------- гаражи ----------------
 GR = Builder("Ext_Garages", collection=col)
+OPEN_I = 4
 for i in range(9):
     y0 = -22 + i * 3.2
+    if i == OPEN_I:
+        # стены, крыша, пол — пустая коробка
+        GR.box((-27, y0, G), (-26.85, y0 + 3.1, G + 2.4), "Rust")
+        GR.box((-27, y0, G), (-21, y0 + 0.12, G + 2.4), "Rust")
+        GR.box((-27, y0 + 2.98, G), (-21, y0 + 3.1, G + 2.4), "Rust")
+        GR.box((-27, y0, G + 2.28), (-21, y0 + 3.1, G + 2.4), "Rust")
+        GR.box((-26.85, y0 + 0.12, G), (-21, y0 + 2.98, G + 0.03), "Concrete")
+        # ворота подняты и перекошены
+        GR.box((-21.6, y0 + 0.3, G + 2.05), (-20.3, y0 + 2.8, G + 2.12), "Rust", rot=Euler((0, math.radians(-12), 0)).to_matrix(), pivot=(-21, y0 + 1.55, G + 2.1))
+        # верстак, канистры, покрышки, полки
+        GR.box((-26.8, y0 + 0.2, G + 0.85), (-25.8, y0 + 2.9, G + 0.92), "DarkWood", bevel=0.01)
+        for yy in (y0 + 0.25, y0 + 2.8):
+            GR.box((-26.7, yy - 0.04, G), (-26.62, yy + 0.04, G + 0.85), "Metal")
+        for k in range(3):
+            GR.box((-26.8, y0 + 0.2, G + 1.3 + k * 0.4), (-26.5, y0 + 2.9, G + 1.33 + k * 0.4), "DarkWood")
+        GR.box((-26.5, y0 + 0.4, G + 0.92), (-26.15, y0 + 0.65, G + 1.3), "PipeGreen", bevel=0.02)
+        GR.box((-26.4, y0 + 2.2, G + 0.92), (-26.1, y0 + 2.45, G + 1.25), "Rust", bevel=0.02)
+        for k in range(3):
+            GR.cyl((-24.6, y0 + 2.6, G + 0.1 + k * 0.2), 0.32, 0.19, "Black", segs=18)
+        GR.cyl((-24, y0 + 1.55, G + 2.12), 0.006, 0.3, "Black", segs=4)
+        GR.sphere((-24, y0 + 1.55, G + 1.93), 0.04, "Bulb", segs=10, rings=8)
+        continue
     GR.box((-27, y0, G), (-21, y0 + 3.1, G + 2.4), "Rust", bevel=0.02)
     GR.box((-21.02, y0 + 0.3, G + 0.1), (-20.98, y0 + 2.8, G + 2.2), "Rust" if i % 3 else "PipeGreen", bevel=0.01)
     GR.box((-27.2, y0 - 0.05, G + 2.4), (-20.8, y0 + 3.15, G + 2.5), "Concrete")
     GR.box((-27.15, y0, G + 2.5), (-20.85, y0 + 3.1, G + 2.7), "Snow")
 GR.finish()
+gy0 = -22 + OPEN_I * 3.2
+empty("Garage_Light", (-24, gy0 + 1.55, G + 1.9), 0.0, col)
+# лопата у стены гаража
+SH = Builder("I_Shovel", origin=(-22.2, gy0 + 0.35, G), collection=col)
+R_ = Euler((math.radians(14), 0, 0)).to_matrix()
+SH.cyl((-22.2, gy0 + 0.42, G + 0.75), 0.018, 1.25, "DarkWood", segs=8, rot=R_)
+SH.box((-22.38, gy0 + 0.22, G + 0.0), (-22.02, gy0 + 0.26, G + 0.36), "Metal", bevel=0.01, rot=R_, pivot=(-22.2, gy0 + 0.24, G + 0.18))
+SH.box((-22.29, gy0 + 0.55, G + 1.36), (-22.11, gy0 + 0.6, G + 1.4), "DarkWood", rot=R_, pivot=(-22.2, gy0 + 0.58, G + 1.38))
+SH.finish()
 
 # ---------------- детская площадка ----------------
 PL = Builder("Ext_Playground", collection=col)
@@ -215,9 +273,12 @@ for dx in (-1.2, 1.2):
         PL.cyl((sx0 + dx, sy0 + dy * 0.6, G + 1.2), 0.04, 2.6, "PipeGreen", segs=8,
                rot=Euler((dy * 0.35, 0, 0)).to_matrix())
 PL.cyl((sx0, sy0, G + 2.45), 0.05, 2.6, "PipeGreen", axis="X", segs=8)
+SW = Builder("Ext_Swing", origin=(sx0, sy0, G + 2.45), collection=col)
 for dx in (-0.25, 0.25):
-    PL.cyl((sx0 + dx, sy0, G + 1.5), 0.008, 1.9, "Metal", segs=4)
-PL.box((sx0 - 0.3, sy0 - 0.2, G + 0.52), (sx0 + 0.3, sy0 + 0.2, G + 0.56), "DarkWood")
+    SW.cyl((sx0 + dx, sy0, G + 1.5), 0.008, 1.9, "Metal", segs=4)
+SW.box((sx0 - 0.3, sy0 - 0.2, G + 0.52), (sx0 + 0.3, sy0 + 0.2, G + 0.56), "DarkWood", bevel=0.01)
+SW.box((sx0 - 0.28, sy0 - 0.18, G + 0.56), (sx0 + 0.28, sy0 + 0.18, G + 0.6), "Snow")
+SW.finish()
 # горка
 hx, hy = 5.0, -19.0
 for dx in (-0.4, 0.4):
@@ -253,7 +314,9 @@ EC = Builder("Ext_Colliders", collection=col)
 for lo, hi in [((-90, -90, G - 0.3), (90, 90, G)), ((-5.2, -4.65, G), (5.7, 16.85, G + 16)),
                ((-30, -42, G), (30, -30, G + 16)), ((-54, -25, G), (-42, 35, G + 16)), ((34, -20, G), (46, 40, G + 16)),
                ((4.1, -11.6, G), (5.9, -7.4, G + 1.4)), ((-16.4, -6.1, G), (-14.6, 19.6, G + 1.4)),
-               ((-27, -22, G), (-21, 7, G + 2.6)), ((15, -6, G), (18, -3, G + 2.8)), ((-1, -23, G), (2, -20, G + 0.3)),
+               ((-27, -22, G), (-21, -9.2, G + 2.6)), ((-27, -6.1, G), (-21, 7, G + 2.6)),
+               ((-27, -9.2, G), (-26.8, -6.1, G + 2.6)), ((-27, -9.2, G), (-21, -9.08, G + 2.6)), ((-27, -6.22, G), (-21, -6.1, G + 2.6)),
+               ((-26.8, -9.0, G), (-25.8, -6.3, G + 0.92)), ((-7.85, -12.35, G), (-7.15, -12.05, G + 2.3)), ((15, -6, G), (18, -3, G + 2.8)), ((-1, -23, G), (2, -20, G + 0.3)),
                ((-90, -90, G), (90, -60, G + 5)), ((-90, 50, G), (90, 90, G + 5)), ((-90, -90, G), (-60, 90, G + 5)), ((60, -90, G), (90, 90, G + 5))]:
     EC.box(lo, hi, "Black")
 EC.finish()

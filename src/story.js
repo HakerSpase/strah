@@ -1,4 +1,4 @@
-import { Color3, SpotLight, Texture, Vector3 } from "@babylonjs/core";
+import { Color3, Ray, SpotLight, Texture, Vector3 } from "@babylonjs/core";
 import { ui } from "./ui.js";
 import { B, Cancelled, Token, clock, rnd, until, wait } from "./util.js";
 
@@ -6,7 +6,7 @@ import { B, Cancelled, Token, clock, rnd, until, wait } from "./util.js";
 const NOTES = {
   I_Note1: { text: "12 ноября 1998.\n\nМилиция опять ничего. Говорят, девочка могла уйти сама.\nЕй шесть лет. Она боялась темноты в коридоре. Она бы никуда не ушла одна.\n\nАндрюшу положила спать к себе. В его комнату я его больше не пущу.\nПо ночам там кто-то ходит." },
   I_Note2: { text: "Андрюша.\n\nКлючи от квартиры и от машины — в холодильнике, в маслёнке. Я всегда прятала их там, помнишь?\n«Копейка» во дворе, у подъезда. Заводится с третьего раза.\n\nЗабери ключи и уезжай. Не оставайся на ночь.\nПожалуйста.\n\nМама" },
-  I_Note3: { text: "Оно ходит, когда гаснет свет.\nЯ слышу, как оно считает шаги.\n\nЕсли смотреть на него — оно стоит.\nНе отворачивайся первой.\nНИКОГДА не отворачивайся первой." },
+  I_Note3: { text: "Оно ходит, когда гаснет свет.\nЯ слышу, как оно считает шаги — до моей двери их сорок два.\n\nСвет режет ему глаза. Посвети в лицо — и оно замешкается.\nНо остановит его только дверь.\nОно не умеет открывать то, что держат изнутри.\n\nНе отворачивайся первой." },
   I_Note5: { text: "Оно взяло её платье из шкафа.\nОно носит её платье.\n\nОно научилось звать её голосом.\nВчера ночью оно стояло за дверью ванной и звало меня:\n«Мама. Мама. Мама».\n\nЯ не открыла." },
   I_Note8: { text: "Оно не любит холод.\nПоэтому я держу балкон открытым, поэтому в квартире всегда мёрзло.\n\nЕсли придётся бежать — беги на улицу.\nВ метель оно далеко не пойдёт.\n\nНо оно умеет ждать у подъезда." },
   I_Note4: { text: "Сынок.\n\nДвадцать семь лет я держала его здесь.\nКаждую ночь я разговаривала с ним, чтобы оно не пошло искать тебя.\nОно не уходит из квартиры, пока в ней кто-то живёт.\n\nЯ больная, старая, и скоро меня не станет.\nТогда ему станет скучно.\n\nНе приезжай. Никогда не приезжай." },
@@ -34,15 +34,22 @@ export class Story {
     this.fear = 0; this.fearTarget = 0;
     this.dead = false; this.ended = false;
     this.inv = {};
+    this.difficulty = "normal";
+    this.chapters = ["Звонок", "Колыбельная", "Метель", "Мамина комната", "Не оборачивайся", "Двор"];
   }
+
+  // по сложности: [лёгкая, обычная, тяжёлая]
+  diff(easy, normal, hard) { return { easy, normal, hard }[this.difficulty] ?? normal; }
 
   on(id, label, use) { this.handlers[id] = { label, use }; }
   off(id) { delete this.handlers[id]; }
 
-  // цель + подсказка, если игрок застрял
-  goal(text, hint) {
-    ui.objective(text);
-    this._goal = { text, hint, t: clock.t, shown: false };
+  // цель. Лёгкая: сразу с подсказкой; обычная: подсказка, если застрял; тяжёлая: только скупая цель (hard)
+  goal(text, hint, hard) {
+    const d = this.difficulty;
+    const shown = d === "hard" ? (hard ?? text) : text;
+    ui.objective(shown, d === "easy" ? hint : null);
+    this._goal = { text: shown, hint: d === "hard" ? null : hint, t: clock.t, shown: d === "easy" };
   }
 
   // ---------------- общее ----------------
@@ -63,7 +70,7 @@ export class Story {
     // автосохранение: игра продолжится с начала этой главы (и на телефоне тоже — хранится в браузере)
     try { localStorage.setItem("k14-save", JSON.stringify({ chapter: n, at: Date.now() })); } catch (e) {}
     try {
-      await [this.ch0, this.ch1, this.ch2, this.ch3, this.ch4][n].call(this, tk);
+      await [this.ch0, this.ch1, this.ch2, this.ch3, this.ch4, this.ch5][n].call(this, tk);
     } catch (e) {
       if (!(e instanceof Cancelled)) console.error(e);
     }
@@ -75,7 +82,8 @@ export class Story {
     this.onFrame = null;
     this.stopLoopSounds();
     w.stopProps();
-    e.hide(); e.showWatcher(null);
+    e.hide(); e.showWatcher(null); e.blocked.clear();
+    w.resetYard();
     w.resetDoors();
     w.repairAll();
     w.setAllLamps(false);
@@ -83,14 +91,16 @@ export class Story {
     for (const id of Object.keys(NOTES)) w.show(id, false);
     w.show("BathWater", n >= 2);
     w.show("I_Keys", n === 0);
+    w.show("I_OvenDoll", n <= 1);
     if (this.famMat) this.famMat.albedoTexture = n >= 1 ? this.photoTexScratched : this.famTex;
-    w.setOutside({ windows: [1, 0.9, 0.7, 0.35, 0.05][n], lamps: 1, storm: [0.8, 1, 1.4, 1.6, 2][n] });
+    w.setOutside({ windows: [1, 0.9, 0.7, 0.35, 0.05, 0.25][n], lamps: 1, storm: [0.8, 1, 1.4, 1.6, 2, 2.2][n] });
     p.hasLight = true; p.lightOn = false; p.lightPower = 1;
     p.noRun = false; p.speedMul = 1; p.frozen = false; p.lookTarget = null; p.mount = null;
-    this.fearTarget = [0.08, 0.25, 0.45, 0.6, 0.85][n];
+    this.fearTarget = [0.08, 0.25, 0.45, 0.6, 0.85, 0.55][n];
     this.flags = {};
     this.inv = n === 0 ? {} : { keys: true };
     ui.clock("03:33");
+    ui.objective(""); this._goal = null;
 
     // --- записки ---
     for (const [id, note] of Object.entries(NOTES)) {
@@ -111,14 +121,14 @@ export class Story {
     this._lockedDoor("Door_Mom", "Заперто. Мамина комната — она всегда её запирала.");
     this._lockedDoor("Door_Closet", "Кладовка. Заперто изнутри?..");
     this._lockedDoor("Door_Kids", "Анина комната. Заперто. Мама так и не открыла её.");
-    this._lockedDoor("Door_Front", "Заперто. Ключи — в холодильнике.");
+    this._lockedDoor("Door_Front", this.diff("Заперто. Ключи — в холодильнике, мама писала.", "Заперто. Нужны ключи.", "Заперто."));
     this._lockedDoor("Door_Outer", "Не поддаётся.");
     // --- холодильник ---
     this.on("Fridge_Door", "Открыть холодильник", () => {
       const open = !w.doorOpen("Fridge_Door");
       w.setFridge(open);
       this.handlers.Fridge_Door.label = open ? "Закрыть холодильник" : "Открыть холодильник";
-      if (open && n === 0 && !this.inv.keys) ui.say("Пусто. Только банки… и мамина маслёнка.", { sec: 3 });
+      if (open && n === 0 && !this.inv.keys) ui.say(this.diff("Пусто. Банки… и мамина маслёнка на средней полке.", "Пусто. Банки, маслёнка. Пахнет железом.", "Пахнет железом."), { sec: 3 });
     });
     // --- вода и газ ---
     this.on("I_Tap", "Открыть кран", () => {
@@ -156,7 +166,8 @@ export class Story {
     }
 
     // точка старта
-    if (n === 0) p.teleport(B(1.0, -2.9), 0.33);
+    if (n === 5) p.teleport(w.nodes.Exit_Spawn ? w.pos("Exit_Spawn") : B(0.2, -6.0, -6.25), Math.PI);
+    else if (n === 0) p.teleport(B(1.0, -2.9), 0.33);
     else { p.teleport(B(0, -0.75), 0); w.setDoor("Door_Bedroom", true, { silent: true, speed: 50 }); }
   }
 
@@ -231,6 +242,7 @@ export class Story {
   // ---------------- смерть ----------------
   async attack() {
     if (this.dead) return;
+    if (this.god) return;          // меню разработчика: сущность не убивает
     this.dead = true;
     const p = this.player, e = this.entity;
     if (this.token) this.token.cancel();
@@ -258,13 +270,25 @@ export class Story {
     this.runLoop(this.loop);
   }
 
+  // стена или закрытая дверь между игроком и сущностью
+  _wallBetween() {
+    const a = this.entity.chest(), b = this.player.camera.position;
+    const d = b.subtract(a), len = d.length();
+    const hit = this.world.scene.pickWithRay(new Ray(a, d.normalize(), len - 0.2), (m) => m.checkCollisions);
+    return !!(hit && hit.hit);
+  }
+
   // ---------------- кадр ----------------
   update(dt) {
     this.fear += (this.fearTarget - this.fear) * Math.min(1, dt * 0.5);
     const e = this.entity;
-    if (!this.dead && e.visible && (e.state === "chase" || e.state === "stalk") && e.distToPlayer() < 1.0) this.attack();
-    if (this._goal && !this._goal.shown && this._goal.hint && clock.t - this._goal.t > 70) {
+    const reach = this.diff(0.95, 1.1, 1.3);
+    if (!this.dead && e.visible && /chase|stalk|hunt/.test(e.state) && e.distToPlayer() < reach && !e.atDoor && !this._wallBetween()) this.attack();
+    // близость сущности — страх и сердце растут сами
+    if (e.visible && /chase|hunt/.test(e.state)) this.fear = Math.max(this.fear, Math.min(1, 1.2 - e.distToPlayer() * 0.08));
+    if (this._goal && !this._goal.shown && this._goal.hint && clock.t - this._goal.t > 60) {
       this._goal.shown = true;
+      ui.objective(this._goal.text, this._goal.hint);
       ui.say("Подсказка: " + this._goal.hint, { sec: 6 });
     }
     if (this.onFrame) this.onFrame(dt);
@@ -374,16 +398,19 @@ export class Story {
     a.knock(kd, 3, 0.5);
     this.knockT = setInterval(() => a.knock(kd, 3, 0.5), 8000);
     ui.say("Стук… из Аниной комнаты.", { sec: 3 });
-    this.goal("Найти ключ от Аниной комнаты. «Там, где тепло»", "тепло на кухне — загляни в духовку плиты");
-    // ключ в духовке
-    await until(() => w.doorOpen("Oven_Door"), tk);
-    await wait(0.6, tk);
-    ui.say("Анина кукла… в духовке. И ключ, привязанный к её руке.", { sec: 4 });
-    this.on("Oven_Door", "Взять ключ", () => {
-      this.inv.kidsKey = true; a.click(null, 0.4);
-      this._door("Oven_Door", null, "духовку");
-      this.goal("Открыть Анину комнату — коридор, первая дверь справа");
+    this.goal("Ключ от Аниной комнаты. «Там, где тепло»", "тепло на кухне — открой духовку газовой плиты, внизу", "«Там, где тепло»");
+    // ключ в духовке: кукла с ключом на руке — отдельный предмет
+    this.on("I_OvenDoll", "Взять куклу", () => {
+      if (!w.doorOpen("Oven_Door")) return;
+      w.show("I_OvenDoll", false); this.off("I_OvenDoll");
+      this.inv.kidsKey = true;
+      a.click(this.at("I_OvenDoll"), 0.4); a.squeak(this.at("I_OvenDoll"));
+      ui.say("Кукла тёплая. Будто духовку только что выключили. К её руке ниткой привязан ключ.", { sec: 4.5 });
+      this.goal("Открыть Анину комнату", "коридор, первая дверь справа — та, за которой стучат", "Анина комната");
     });
+    await until(() => w.doorOpen("Oven_Door"), tk);
+    await wait(0.5, tk);
+    if (!this.inv.kidsKey) ui.say("В духовке… Анина кукла.", { sec: 3 });
     await until(() => this.inv.kidsKey, tk);
     this.on("Door_Kids", "Отпереть", () => {
       clearInterval(this.knockT);
@@ -548,30 +575,67 @@ export class Story {
     await until(() => this.flags.read_I_Note4, tk);
     await until(() => !ui.noteOpen, tk);
     w.setTV(false); this.tv.stop(); this.tv = null;
+    this.onFrame = null;
     a.thump(null, 0.3, 60);
     await wait(1.2, tk);
-    ui.say("Она знала. Двадцать семь лет она знала — и молчала.", { sec: 4 });
+    ui.say("Она знала. Все эти годы — знала. И кормила его собой.", { sec: 4 });
+    await wait(2.5, tk);
+    // кладовка сама приоткрывается — и в коридоре гаснет свет
     w.setDoor("Door_Closet", true, { speed: 0.4, amount: 0.5 });
     this._door("Door_Closet");
-    this.goal("Кладовка. Аня пряталась в кладовке", "кладовка — в коридоре справа, напротив маминой комнаты");
+    this.goal("Кладовка. Аня пряталась там", "дверь справа в коридоре, напротив маминой комнаты", "Кладовка");
     await until(() => this.inRoom("corr"), tk);
+    for (const k of ["Lamp_Corr1", "Lamp_Corr3"]) w.flicker(k, 1.5);
     a.swell(2, 0.45);
     await wait(1.5, tk);
+    w.setLamp("Lamp_Corr1", false);
     e.place(B(0, 0.4, 0), 0, "Peek");
     e.faceTo(p.position);
     a.jointCrack(e.headXYZ(), 6);
-    ui.say("Не отворачивайся первой.", { sec: 3.5 });
-    this.fearTarget = 0.75;
-    await wait(2.5, tk);
-    e.stalk(1.5);
-    await until(() => this.flags.read_I_Note6, tk);
+    a.whisper(e.headXYZ(), 1.6, 0.5);
+    ui.say("«Андрюша. Иди к маме».", { voice: true, sec: 3 });
+    this.fearTarget = 0.8;
+    await wait(this.diff(3.2, 2.2, 1.4), tk);
+    // охота: дверь кладовки — единственное, что его держит
+    e.blocked.add("Door_Closet");
+    e.hunt(this.diff(1.45, 1.8, 2.1));
+    a.rattle(e.headXYZ(), 1.8, 0.7);
+    this.goal("Спрячься в кладовке и закрой дверь!", "кладовка справа по коридору; зайди внутрь и закрой дверь [E]", "Спрячься");
+    // прятки: внутри, дверь закрыта — оно скребётся, зовёт и уходит
+    let hidT = 0, doorT = 0, opened = false;
+    this.onFrame = (dt) => {
+      const hidden = this.inRoom("closet") && !w.doorOpen("Door_Closet");
+      hidT = hidden ? hidT + dt : 0;
+      if (e.atDoor === "Door_Closet") {
+        doorT += dt;
+        if (!this.flags.callOut && doorT > 2.5) {
+          this.flags.callOut = true;
+          a.whisper(this.at("Door_Closet", 0.5), 2.5, 0.7);
+          ui.say(this.diff("«Анечка. Открой маме». Не открывай. Жди.", "«Анечка. Открой маме».", "«Открой».") , { voice: true, sec: 4 });
+        }
+      }
+      // открыл, пока оно за дверью — бросок
+      if (e.atDoor === "Door_Closet" && w.doorOpen("Door_Closet") && !opened) { opened = true; e.blocked.delete("Door_Closet"); e.chase(3.4); }
+    };
+    await until(() => doorT > this.diff(6, 8, 10) && hidT > 2, tk);
+    // уходит: шаги удаляются к входной двери, хлопок
     e.hide();
+    this.onFrame = null;
+    const from = this.at("Door_Closet");
+    for (let i = 0; i < 7; i++) setTimeout(() => this.audio.ctx && a.monsterStep({ x: from.x - 0.6, y: 0.1, z: from.z - i * 1.1 }, "wood", false), 400 + i * 700);
+    await wait(5.8, tk);
+    a.doorSlam(w.doorPos("Door_Front"));
+    await wait(2.0, tk);
+    ui.say("Ушло. Кажется, ушло. Здесь… её записка.", { sec: 4 });
+    this.fearTarget = 0.55;
+    this.goal("Записка на полке в кладовке", "листок на нижней полке слева", "");
+    await until(() => this.flags.read_I_Note6, tk);
     await until(() => !ui.noteOpen, tk);
     for (const k in w.lamps) w.flicker(k, 1);
     this.scare("boom", 0.8);
     this.box = a.musicBox(this.at("I_Note6", 0.4), { slow: 1.6, detune: 30, vol: 0.3 });
     await wait(3, tk);
-    ui.say("Аня, прости меня. Я не искал. Я просто уехал.", { sec: 5 });
+    ui.say("Аня, прости меня. Я не искал. Я просто уехал — и жил.", { sec: 5 });
     this.goal("Входная дверь");
     await this.throughVestibule(tk, 4);
   }
@@ -611,22 +675,92 @@ export class Story {
     e.hide();
     await ui.fade(1, 0.4);
     p.frozen = true;
-    for (let i = 0; i < 10; i++) setTimeout(() => a.footstep(null, "concrete", true), i * 260);
+    for (let i = 0; i < 10; i++) setTimeout(() => this.audio.ctx && a.footstep(null, "concrete", true), i * 260);
     ui.say("Третий этаж… второй… первый…", { sec: 3 });
     await wait(3, tk);
-    // во дворе
-    p.teleport(this.world.nodes.Exit_Spawn ? this.world.pos("Exit_Spawn") : B(0.2, -6.0, -6.25), Math.PI);
-    p.frozen = false; p.speedMul = 0.85;
-    w.setOutside({ storm: 2.4, lamps: 1 });
+    a.doorSlam(null);
+    this.runLoop(5);
+  }
+
+  // =====================================================================
+  // ГЛАВА 6 — «Двор»
+  // =====================================================================
+  async ch5(tk) {
+    const w = this.world, a = this.audio, p = this.player, e = this.entity;
+    p.speedMul = 0.9; p.lightOn = true;
+    w.setOutside({ storm: 2.2, lamps: 1 });
+    w.yardLife(true);
+    const sub = this.devSub; this.devSub = null;
     await ui.fade(0, 1.2);
-    ui.say("Улица. Метель. «Копейка» — вон она, у подъезда.", { sec: 3.5 });
-    this.goal("Сесть в машину", "мамина бежевая машина стоит прямо у подъезда, справа");
-    await wait(2.5, tk);
-    // оно выходит из подъезда
-    e.place(this.world.nodes.Exit_Spawn ? this.world.pos("Exit_Spawn").add(new Vector3(0, 0, 1.0)) : B(0.2, -5.0, -6.3), Math.PI, "Walk");
-    a.doorSlam(this.at("Exit_Spawn", 1.2));
-    e.chase(2.2); e.play("Walk", 1.3);
+    if (sub === "drive") { await this.drive(tk); return; }
+    if (sub !== "car") {
+      ui.say("Улица. Метель такая, что не видно соседнего дома. Мамина «копейка» — у подъезда.", { sec: 4.5 });
+      this.goal("Машина у подъезда", "бежевая машина в нескольких шагах справа от подъезда", "Машина");
+      // фигура ждёт под дальним фонарём
+      e.showWatcher(B(-12.4, -15.8, -6.3), p.position);
+      await this.waitHandler("I_Car", "Сесть в машину", tk);
+      a.thump(w.xyz("Ext_Car_Drive", 0.6), 0.4, 90);
+      ui.say("Дверь примёрзла, а колёса — по ступицу в снегу. Без лопаты не выехать.", { sec: 4.5 });
+      await wait(2.5, tk);
+      ui.say("У гаражей один бокс открыт — там горит свет. Дядя Коля всегда держал там лопату.", { sec: 5 });
+      w.setGarage(true);
+      this.goal("Лопата — в открытом гараже", "гаражи слева за детской площадкой; светится единственный открытый", "Найти, чем откопать машину");
+      this.on("I_Car", "Машина", () => ui.say("Без лопаты не откопать.", { sec: 2 }));
+      // таксофон звонит, когда проходишь мимо
+      this.ring = a.phoneRing(w.xyz("I_Payphone", 1.4), true);
+      this.on("I_Payphone", "Снять трубку", async () => {
+        this.off("I_Payphone");
+        if (this.ring) { this.ring.stop(); this.ring = null; }
+        a.click(w.xyz("I_Payphone", 1.4), 0.5);
+        await wait(0.8);
+        this.tv = a.tvStatic(null);
+        ui.say("«…Андрюша. Не уезжай без меня. Я же тут, в машине. Я тебя жду».", { voice: true, sec: 5 });
+        a.whisper(null, 3, 0.45);
+        await wait(4.5);
+        if (this.tv) { this.tv.stop(); this.tv = null; }
+        a.dialTone();
+        this.fear = Math.min(1, this.fear + 0.3);
+      });
+      await this.waitHandler("I_Shovel", "Взять лопату", tk);
+      if (this.ring) { this.ring.stop(); this.ring = null; }
+      this.off("I_Payphone");
+      w.show("I_Shovel", false);
+      a.thump(w.xyz("I_Shovel", 0.5), 0.3, 200);
+      await wait(0.8, tk);
+      w.setGarage(false, true);
+      a.bulbPop(w.xyz("I_Shovel", 2));
+      e.showWatcher(null);
+      p.lightFlicker = 0.6;
+      await wait(1.6, tk);
+      a.scream(this.xyz(B(-17, 12, -4.5)), 0.5);
+      ui.say("Под фонарём больше никого нет. А за гаражами — хруст снега.", { sec: 4 });
+    } else w.setGarage(false, true);
+    // охота во дворе: свет фонаря тормозит его, фонари гаснут, когда оно проходит
+    this.inv.shovel = true;
+    e.place(B(-17, 12, -6.3), 0, "Walk");
+    e.hunt(this.diff(1.6, 1.95, 2.25));
+    this.fearTarget = 0.9;
+    this.goal("Откопать машину. Бегом!", "к машине у подъезда; свети на него фонариком — свет его тормозит", "Машина");
+    this.onFrame = () => w.dimNear(e.pos, 5);
+    let dug = 0;
+    const need = this.diff(3, 5, 7);
+    this.on("I_Car", "Откопать колёса", () => {
+      if (this.digBusy) return;
+      this.digBusy = true;
+      a.shovel(w.xyz("Ext_Car_Drive", 0.3));
+      p.shake = Math.max(p.shake, 0.25);
+      setTimeout(() => { this.digBusy = false; }, 650);
+      dug++;
+      w.setDrift(1 - dug / need);
+      if (dug < need) this.handlers.I_Car.label = `Откопать колёса (${dug}/${need})`;
+      else { this.off("I_Car"); this.flags.dug = true; }
+    });
+    await until(() => this.flags.dug, tk);
+    w.setDrift(0);
+    a.doorSlam(w.xyz("Ext_Car_Drive", 0.8));
+    this.goal("В машину!");
     await this.waitHandler("I_Car", "Сесть в машину", tk);
+    this.onFrame = null;
     e.hide();
     await this.drive(tk);
   }
@@ -635,6 +769,7 @@ export class Story {
   async drive(tk) {
     const w = this.world, a = this.audio, p = this.player, e = this.entity, scene = w.scene;
     const car = w.nodes.Ext_Car_Drive;
+    w.setDrift(0);
     const seatLocal = new Vector3(-0.35, 1.12, 0.45);
     p.frozen = true; p.lightOn = false;
     p.mount = () => Vector3.TransformCoordinates(seatLocal, car.getWorldMatrix());

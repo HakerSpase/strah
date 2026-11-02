@@ -26,10 +26,18 @@ export class Audio {
     this.fx = ctx.createGain(); this.fx.gain.value = this.vol.effects; this.fx.connect(this.master);
     this.amb = ctx.createGain(); this.amb.gain.value = this.vol.ambience; this.amb.connect(this.master);
 
-    this.reverb = ctx.createConvolver();
-    this.reverb.buffer = this._impulse(1.8, 2.8);
-    this.wet = ctx.createGain(); this.wet.gain.value = 0.45;
-    this.reverb.connect(this.wet).connect(this.fx);
+    // реверберация: квартира (тесно, мягко), подъезд (бетон, длинный хвост), улица (снег глушит, почти сухо)
+    this.reverb = ctx.createGain();
+    this.wet = ctx.createGain(); this.wet.gain.value = 0.5;
+    this.wet.connect(this.fx);
+    this.spaces = {};
+    for (const [name, sec, decay, damp, pre] of [["room", 1.1, 3.2, 0.55, 0.008], ["stair", 3.2, 2.2, 0.25, 0.03], ["street", 0.9, 4.5, 0.8, 0.0]]) {
+      const c = ctx.createConvolver(); c.buffer = this._impulse(sec, decay, damp, pre);
+      const g = ctx.createGain(); g.gain.value = name === "room" ? 1 : 0;
+      this.reverb.connect(g).connect(c).connect(this.wet);
+      this.spaces[name] = g;
+    }
+    this.space = "room";
 
     this.noiseBuf = this._noise(4, "white");
     this.brownBuf = this._noise(6, "brown");
@@ -44,14 +52,33 @@ export class Audio {
   }
 
   // ---------------- низкоуровневые помощники ----------------
-  _impulse(seconds, decay) {
-    const ctx = this.ctx, len = Math.floor(ctx.sampleRate * seconds);
-    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  /** Импульс помещения: ранние отражения + хвост, который темнеет со временем (damp — поглощение высоких). */
+  _impulse(seconds, decay, damp = 0.4, pre = 0.01) {
+    const ctx = this.ctx, sr = ctx.sampleRate, len = Math.floor(sr * seconds);
+    const buf = ctx.createBuffer(2, len, sr);
     for (let c = 0; c < 2; c++) {
       const d = buf.getChannelData(c);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay) * 0.6;
+      let lp = 0;
+      for (let i = 0; i < len; i++) {
+        const x = i / len;
+        const k = Math.min(0.98, damp * 0.3 + x * damp);        // фильтр закрывается к концу хвоста
+        lp = lp * k + (Math.random() * 2 - 1) * (1 - k);
+        d[i] = lp * Math.pow(1 - x, decay) * 0.9;
+      }
+      // ранние отражения от стен
+      for (let r = 0; r < 9; r++) {
+        const at = Math.floor((pre + rnd(0.004, 0.06) * (r + 1) * 0.4) * sr);
+        if (at < len) d[at] += (Math.random() < 0.5 ? -1 : 1) * rnd(0.2, 0.6) * Math.pow(0.8, r);
+      }
     }
     return buf;
+  }
+
+  /** Сменить акустику: room | stair | street. */
+  setSpace(name) {
+    if (!this.spaces || this.space === name) return;
+    this.space = name;
+    for (const k in this.spaces) this.spaces[k].gain.setTargetAtTime(k === name ? 1 : 0, this.now, 0.4);
   }
 
   _noise(seconds, color) {
@@ -81,7 +108,14 @@ export class Audio {
       p.distanceModel = "inverse";
       p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = 60;
       p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
-      g.connect(p); tail = p; g.panner = p; nodes.push(p);
+      // за стеной — глуше и тише (луч от слушателя считает игра)
+      const occ = this.occluder ? this.occluder(pos) : 0;
+      if (occ > 0) {
+        const lp = this._filter("lowpass", 18000 - occ * 16800, 0.7);
+        const og = this.ctx.createGain(); og.gain.value = 1 - occ * 0.45;
+        g.connect(lp).connect(og).connect(p); nodes.push(lp, og);
+      } else g.connect(p);
+      tail = p; g.panner = p; nodes.push(p);
     }
     tail.connect(bus === "amb" ? this.amb : this.fx);
     if (wet > 0) {
@@ -175,22 +209,59 @@ export class Audio {
       const og = ctx.createGain(); og.gain.value = 0.05; o.connect(og).connect(dlp); o.start();
     }
     dlp.connect(this.droneGain); this.droneGain.connect(this.amb);
-    this._houseTimer = setInterval(() => this._houseSound(), 8000);
+    this._houseTimer = setInterval(() => this._houseSound(), 13000);
+    this._music();
+  }
+
+  // Партитура: низкий органный пад, «стеклянные» обертоны и редкие колокола; громче и диссонантнее от страха
+  _music() {
+    const ctx = this.ctx;
+    this.musicGain = ctx.createGain(); this.musicGain.gain.value = 0.0; this.musicGain.connect(this.amb);
+    const lp = this._filter("lowpass", 900, 0.4);
+    const send = ctx.createGain(); send.gain.value = 0.6; lp.connect(send).connect(this.reverb);
+    lp.connect(this.musicGain);
+    this.musicLP = lp;
+    const chord = [36.71, 43.65, 55.0, 73.42, 87.31];          // D1 F1 A1 D2 F2 — минор, очень низко
+    this.padOsc = chord.map((f, i) => {
+      const o = ctx.createOscillator(); o.type = i < 2 ? "sawtooth" : "triangle"; o.frequency.value = f; o.detune.value = rnd(-6, 6);
+      const g = ctx.createGain(); g.gain.value = 0.06 / (1 + i * 0.3);
+      const l = ctx.createOscillator(); l.frequency.value = rnd(0.03, 0.09); const lg = ctx.createGain(); lg.gain.value = g.gain.value * 0.6;
+      l.connect(lg).connect(g.gain); l.start();
+      o.connect(g).connect(lp); o.start(); return o;
+    });
+    // диссонанс — малая секунда, вступает со страхом
+    const dis = ctx.createOscillator(); dis.type = "sawtooth"; dis.frequency.value = 77.78;
+    this.disGain = ctx.createGain(); this.disGain.gain.value = 0;
+    dis.connect(this.disGain).connect(lp); dis.start();
+    // редкие ноты высоко — как будто кто-то трогает расстроенное пианино в соседней квартире
+    const bellNotes = [587.3, 698.5, 880, 932.3, 1174.7, 622.3];
+    this._bellT = setInterval(() => {
+      if (!this.ctx || Math.random() < 0.45 || this.quiet) return;
+      const t = this.now, f = bellNotes[Math.floor(Math.random() * bellNotes.length)] * (this.fear > 0.6 && Math.random() < 0.5 ? 0.944 : 1);
+      const out = this._out(null, { wet: 0.9, life: 7, bus: "amb" }); out.gain.value = 0.05 + this.fear * 0.05;
+      for (const [r, a, d] of [[1, 1, 4], [2.01, 0.3, 2], [3.98, 0.12, 1], [0.5, 0.25, 5]]) this._tone(out, t, { f: f * r, peak: a * 0.2, a: 0.004, d });
+    }, 9000);
   }
 
   _houseSound() {
-    if (!this.ctx || Math.random() < 0.5 || this.quiet) return;
+    if (!this.ctx || Math.random() < 0.55 || this.quiet) return;
     const pos = this.housePos ? this.housePos() : null;
     const r = Math.random();
     if (r < 0.35) this.pipes(pos);
     else if (r < 0.6) this.thump(pos, rnd(0.12, 0.25));
-    else if (r < 0.85) this.creak(pos, rnd(0.4, 0.9), 0.18);
+    else if (r < 0.75) this.creak(pos, rnd(0.4, 0.9), 0.1);
     else this.windowRattle(pos);
   }
 
   setFear(f) {
     this.fear = Math.max(0, Math.min(1, f));
-    if (this.droneGain) this.droneGain.gain.setTargetAtTime(this.fear * 0.35, this.now, 1.0);
+    const t = this.now;
+    if (this.droneGain) this.droneGain.gain.setTargetAtTime(this.fear * 0.3, t, 1.0);
+    if (this.musicGain) {
+      this.musicGain.gain.setTargetAtTime(0.35 + this.fear * 0.65, t, 2.0);
+      this.disGain.gain.setTargetAtTime(Math.max(0, this.fear - 0.45) * 0.09, t, 1.5);
+      this.musicLP.frequency.setTargetAtTime(500 + this.fear * 1400, t, 1.5);
+    }
   }
   setHum(v) { if (this.humGain) this.humGain.gain.setTargetAtTime(Math.min(1, v), this.now, 0.1); }
   setWind(v) { if (this.windGain) this.windGain.gain.setTargetAtTime(v, this.now, 0.5); }
@@ -200,14 +271,18 @@ export class Audio {
     const t = this.now, out = this._out(pos, { wet: 0.2, life: 1 });
     out.gain.value = run ? 0.7 : 0.45;
     if (surface === "snow") {
-      for (let i = 0; i < 6; i++) this._burst(out, t + i * 0.012, { f: rnd(1500, 3500), q: 1.5, peak: 0.25, d: 0.03 });
-      this._burst(out, t, { f: 300, q: 0.8, peak: 0.3, d: 0.12, buf: this.brownBuf });
+      // хруст: десятки мелких «ломающихся» зёрен за 150 мс
+      for (let i = 0; i < 14; i++) this._burst(out, t + i * rnd(0.006, 0.013), { f: rnd(1200, 4200), q: 2, peak: rnd(0.08, 0.22), a: 0.001, d: 0.02 });
+      this._burst(out, t, { f: 260, q: 0.8, peak: 0.32, d: 0.16, buf: this.brownBuf });
       return;
     }
     const f = { wood: 650, lino: 1100, tile: 2200, carpet: 350, concrete: 900 }[surface] || 650;
-    this._burst(out, t, { f: f * rnd(0.85, 1.15), q: surface === "tile" ? 2.5 : 1.2, peak: surface === "carpet" ? 0.1 : 0.25, a: 0.004, d: 0.08 });
-    this._tone(out, t, { f: 95, f2: 45, peak: 0.3, d: 0.08 });
-    if (surface === "wood" && Math.random() < 0.15) this.creak(pos, rnd(0.25, 0.5), 0.25);
+    const soft = surface === "carpet" ? 0.35 : 1;
+    this._tone(out, t, { f: 95, f2: 45, peak: 0.3 * soft, d: 0.08 });                                   // каблук
+    this._burst(out, t, { f: f * rnd(0.85, 1.15), q: surface === "tile" ? 2.5 : 1.2, peak: 0.22 * soft, a: 0.004, d: 0.07 });
+    this._burst(out, t + rnd(0.06, 0.09), { f: f * 1.6 * rnd(0.9, 1.1), q: 1.5, peak: 0.12 * soft, a: 0.003, d: 0.05 }); // носок
+    if (surface === "concrete") this._burst(out, t + 0.01, { f: 3500, q: 2, peak: 0.06, d: 0.12 });       // песок на ступенях
+    if (surface === "wood" && Math.random() < 0.035) this.creak(pos, rnd(0.25, 0.5), 0.12);
   }
 
   creak(pos, dur = 0.8, vol = 0.4, pitch = 1) {
@@ -245,7 +320,8 @@ export class Audio {
       else if (kind === "fridge") { this._burst(out, t, { f: 300, q: 0.7, peak: 0.4, d: 0.12, buf: this.brownBuf }); this._burst(out, t + 0.05, { f: 1800, q: 1, peak: 0.12, d: 0.25 }); }
       else if (kind === "small") { this.creak(pos, 0.35, 0.2, 1.8); }
       else if (kind === "oven") { this.creak(pos, 0.45, 0.25, 2.6); this._tone(out, t + 0.45, { f: 520, type: "triangle", peak: 0.15, d: 0.3 }); }
-      else if (Math.random() < 0.7 || speed < 1) this.creak(pos, rnd(0.6, 1.3) / Math.max(0.5, speed), 0.4, rnd(0.7, 1.0));
+      else if (Math.random() < 0.3 || speed < 1) this.creak(pos, rnd(0.5, 1.1) / Math.max(0.5, speed), 0.22, rnd(0.7, 1.0));
+      else this._burst(out, t, { f: 420, q: 0.7, peak: 0.12, d: 0.2, buf: this.brownBuf });
     } else {
       if (kind === "fridge") { this._burst(out, t, { f: 180, q: 0.8, peak: 0.6, d: 0.1, buf: this.brownBuf }); return; }
       if (kind === "oven") { this._tone(out, t, { f: 300, f2: 200, type: "triangle", peak: 0.3, d: 0.2 }); this._burst(out, t, { f: 2500, q: 3, peak: 0.3, d: 0.08 }); return; }
@@ -452,8 +528,8 @@ export class Audio {
   }
 
   // колыбельная музыкальной шкатулки
-  musicBox(pos, { slow = 1, detune = 0, vol = 0.35, loop = false } = {}) {
-    const out = this._out(pos, { wet: 0.5, ref: 0.8, life: 0 }); out.gain.value = vol;
+  musicBox(pos, { slow = 1, detune = 0, vol = 0.35, loop = false, ref = 1.2 } = {}) {
+    const out = this._out(pos, { wet: 0.5, ref, roll: 1.0, life: 0 }); out.gain.value = vol;
     const notes = [76, 79, 83, 81, 79, 76, 74, 76, 0, 72, 76, 79, 77, 76, 74, 71, 0, 76, 79, 83, 84, 83, 79, 81, 79, 76, 0, 74, 72, 71, 72, 76];
     let alive = true;
     const play = () => {
@@ -473,13 +549,15 @@ export class Audio {
 
   radio(pos) {
     const ctx = this.ctx;
-    const out = this._out(pos, { wet: 0.3, ref: 1, life: 0 }); out.gain.value = 0.4;
+    const out = this._out(pos, { wet: 0.25, ref: 3, roll: 0.9, life: 0 }); out.gain.value = 0.9;
     const n = this._src(this.noiseBuf, true);
     const bp = this._filter("bandpass", 2400, 0.6);
-    const ng = ctx.createGain(); ng.gain.value = 0.12;
+    const ng = ctx.createGain(); ng.gain.value = 0.1;
     n.connect(bp).connect(ng).connect(out); n.start();
-    const crackle = setInterval(() => { if (Math.random() < 0.4) this.click(pos, 0.1); }, 110);
-    const mb = this.musicBox(pos, { slow: 1.35, detune: 45, vol: 0.22, loop: true });
+    // эфир «плывёт»: шум то накрывает мелодию, то отступает
+    const fl = ctx.createOscillator(); fl.frequency.value = 0.17; const fg = ctx.createGain(); fg.gain.value = 0.08; fl.connect(fg).connect(ng.gain); fl.start();
+    const crackle = setInterval(() => { if (Math.random() < 0.4) this.click(pos, 0.12); }, 110);
+    const mb = this.musicBox(pos, { slow: 1.35, detune: 45, vol: 0.65, loop: true, ref: 3 });
     return { stop: () => { clearInterval(crackle); mb.stop(); out.gain.setTargetAtTime(0, this.now, 0.05); setTimeout(() => { n.stop(); out.disconnect(); }, 400); } };
   }
 
@@ -523,6 +601,95 @@ export class Audio {
     return {
       rev: (k) => oscs.forEach((o, i) => o.frequency.setTargetAtTime(32 * (i + 1) * k, this.now, 0.4)),
       stop: () => { out.gain.setTargetAtTime(0, this.now, 0.5); setTimeout(() => oscs.forEach((o) => o.stop()), 3000); },
+    };
+  }
+
+  // ---------------- новые звуки ----------------
+  /** Ногти по дереву: длинный скрежет с «зацепами». */
+  scratch(pos, dur = 1.2) {
+    const ctx = this.ctx, t = this.now;
+    const out = this._out(pos, { wet: 0.35, life: dur + 1.5, hrtf: true }); out.gain.value = 0.55;
+    const n = this._src(this.noiseBuf);
+    const bp = this._filter("bandpass", 2600, 7);
+    bp.frequency.setValueAtTime(rnd(1800, 2600), t); bp.frequency.linearRampToValueAtTime(rnd(3000, 4200), t + dur);
+    const am = ctx.createGain(); am.gain.value = 0;
+    const steps = Math.floor(dur * 60);
+    for (let i = 0; i < steps; i++) am.gain.setValueAtTime(Math.random() < 0.7 ? rnd(0.2, 1) : 0.02, t + (i / steps) * dur);
+    am.gain.setValueAtTime(0, t + dur);
+    n.connect(bp).connect(am).connect(out); n.start(t, rnd(0, 3)); n.stop(t + dur + 0.05);
+    this._burst(out, t, { f: 400, q: 1, peak: 0.25, d: 0.1, buf: this.brownBuf });
+  }
+
+  /** Кто-то дёргает ручку двери снаружи. */
+  handleRattle(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.3, life: 2.5 }); out.gain.value = 0.55;
+    for (let i = 0; i < 7; i++) {
+      this._burst(out, t + i * rnd(0.07, 0.12), { f: rnd(2200, 3400), q: 6, peak: 0.45, d: 0.03 });
+      this._tone(out, t + i * 0.1, { f: 180, f2: 120, peak: 0.12, d: 0.05 });
+    }
+  }
+
+  /** Шаги сущности: тяжёлая волочащаяся поступь с хрустом суставов. */
+  monsterStep(pos, surface = "wood", fast = false) {
+    const t = this.now, out = this._out(pos, { wet: 0.35, life: 1.5, ref: 1.6 }); out.gain.value = fast ? 0.9 : 0.7;
+    this._tone(out, t, { f: 70, f2: 32, peak: 0.6, d: 0.18 });
+    if (surface === "snow") for (let i = 0; i < 12; i++) this._burst(out, t + i * 0.01, { f: rnd(900, 3000), q: 2, peak: 0.18, d: 0.025 });
+    else this._burst(out, t, { f: 500, q: 0.9, peak: 0.35, d: 0.1, buf: this.brownBuf });
+    // волочит вторую ногу
+    if (!fast) this._burst(out, t + 0.18, { f: surface === "snow" ? 1600 : 1100, q: 0.8, peak: 0.08, a: 0.08, d: 0.35 });
+    if (Math.random() < 0.25) this.jointCrack(pos, 2);
+  }
+
+  /** Лопата в снег: скрежет по насту + глухой ком. */
+  shovel(pos) {
+    const t = this.now, out = this._out(pos, { wet: 0.1, life: 1.5 }); out.gain.value = 0.8;
+    this._burst(out, t, { f: 2600, q: 1.2, peak: 0.35, a: 0.03, d: 0.2 });
+    this._tone(out, t, { f: 420, f2: 300, type: "triangle", peak: 0.08, d: 0.15 });
+    for (let i = 0; i < 10; i++) this._burst(out, t + 0.05 + i * 0.012, { f: rnd(1200, 3200), q: 2, peak: 0.12, d: 0.02 });
+    this._burst(out, t + 0.35, { f: 220, q: 0.7, peak: 0.45, d: 0.18, buf: this.brownBuf });
+  }
+
+  swingCreak(pos, amp = 0.3) {
+    const t = this.now, out = this._out(pos, { wet: 0.15, life: 2, ref: 2 }); out.gain.value = 0.18 + amp * 0.4;
+    const o = this.ctx.createOscillator(); o.type = "sawtooth";
+    o.frequency.setValueAtTime(rnd(600, 700), t); o.frequency.linearRampToValueAtTime(rnd(820, 980), t + 0.45);
+    const g = this.ctx.createGain(); this._env(g.gain, t, 0.08, 0.12, 0.4);
+    o.connect(this._filter("bandpass", 1500, 6)).connect(g).connect(out); o.start(t); o.stop(t + 0.6);
+  }
+
+  dog(pos, n = 3) {
+    for (let i = 0; i < n; i++) {
+      setTimeout(() => {
+        if (!this.ctx) return;
+        const t = this.now, out = this._out(pos, { wet: 0.4, life: 1.5, ref: 8, bus: "amb" }); out.gain.value = 0.3;
+        const f = rnd(380, 460);
+        this._tone(out, t, { f, f2: f * 0.6, type: "sawtooth", peak: 0.25, a: 0.01, d: 0.16 });
+        this._burst(out, t, { f: 900, q: 1.5, peak: 0.3, a: 0.01, d: 0.12 });
+      }, i * rnd(380, 520));
+    }
+  }
+
+  trainHorn(pos) {
+    const ctx = this.ctx, t = this.now, d = 3.2;
+    const out = this._out(pos, { wet: 0.8, life: d + 3, ref: 40, roll: 0.5, bus: "amb" }); out.gain.value = 0.12;
+    for (const f of [311, 370, 466]) {
+      const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = f;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.15, t + 0.4); g.gain.setValueAtTime(0.15, t + d - 0.6); g.gain.linearRampToValueAtTime(0.0001, t + d);
+      o.connect(this._filter("lowpass", 1200)).connect(g).connect(out); o.start(t); o.stop(t + d + 0.1);
+    }
+  }
+
+  /** Машина проезжает мимо: шум шин по снегу и мотор, позицию двигает мир. */
+  carPass() {
+    const ctx = this.ctx;
+    const out = this._out({ x: 0, y: 0, z: 0 }, { wet: 0.15, life: 0, ref: 4, roll: 1.2 }); out.gain.value = 0.7;
+    const n = this._src(this.brownBuf, true); const lp = this._filter("lowpass", 600);
+    n.connect(lp).connect(out); n.start();
+    const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = 48;
+    const og = ctx.createGain(); og.gain.value = 0.1; o.connect(this._filter("lowpass", 300)).connect(og).connect(out); o.start();
+    return {
+      move: (p) => { out.panner.positionX.value = p.x; out.panner.positionY.value = p.y; out.panner.positionZ.value = p.z; },
+      stop: () => { out.gain.setTargetAtTime(0, this.now, 0.3); setTimeout(() => { n.stop(); o.stop(); out.disconnect(); }, 1500); },
     };
   }
 

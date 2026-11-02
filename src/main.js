@@ -1,15 +1,19 @@
 import {
-  Color3, Color4, DefaultRenderingPipeline, Engine, ImageProcessingConfiguration, Ray, Scene, SSAO2RenderingPipeline,
+  Color3, Color4, ColorCurves, DefaultRenderingPipeline, Engine, GlowLayer, ImageProcessingConfiguration, Ray, Scene, SSAO2RenderingPipeline,
 } from "@babylonjs/core";
+import { setupFX } from "./fx.js";
 import { Audio } from "./audio.js";
 import { Entity } from "./entity.js";
 import { Player } from "./player.js";
 import { Story } from "./story.js";
 import { ui } from "./ui.js";
 import { clock } from "./util.js";
+import { Vector3 as BABYLON_V } from "@babylonjs/core";
 import { World } from "./world.js";
 
 const $ = (id) => document.getElementById(id);
+// отладка в фоновой вкладке: ?bg — кадры по таймеру, а не по requestAnimationFrame
+if (new URLSearchParams(location.search).has("bg")) window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
 const canvas = $("game");
 const isTouch = matchMedia("(pointer: coarse)").matches && navigator.maxTouchPoints > 0;
 if (isTouch) document.body.classList.add("touch");
@@ -17,7 +21,7 @@ if (isTouch) document.body.classList.add("touch");
 // ---------------- настройки (сохраняются в браузере) ----------------
 const engine = new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "high-performance" }, false);
 const weakGpu = isTouch || /Radeon\(TM\) Graphics|Radeon Graphics|Intel|UHD|Iris|Mali|Adreno|PowerVR|Apple GPU/i.test(engine.getGlInfo().renderer);
-const DEFAULTS = { fx: "strong", sens: 1, bright: 1, master: 0.85, ambience: 0.8, effects: 0.9, quality: weakGpu ? "low" : "medium" };
+const DEFAULTS = { difficulty: "normal", fx: "strong", sens: 1, bright: 1, master: 0.85, ambience: 0.8, effects: 0.9, quality: weakGpu ? "low" : "medium" };
 let settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem("k14-settings") || "{}")); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem("k14-settings", JSON.stringify(settings)); } catch (e) {} };
@@ -52,7 +56,13 @@ ip.toneMappingEnabled = true; ip.toneMappingType = ImageProcessingConfiguration.
 ip.contrast = 1.12;
 ip.vignetteEnabled = true; ip.vignetteWeight = 1.6; ip.vignetteStretch = 0.5;
 ip.vignetteColor = new Color4(0, 0, 0, 0); ip.vignetteBlendMode = ImageProcessingConfiguration.VIGNETTEMODE_MULTIPLY;
-let ssao = null;
+ip.colorCurvesEnabled = true;
+const curves = new ColorCurves();
+curves.shadowsHue = 215; curves.shadowsDensity = 35; curves.shadowsSaturation = -10;      // тени — в холодную синеву
+curves.highlightsHue = 35; curves.highlightsDensity = 18;                                 // свет ламп — в тёплый
+curves.globalSaturation = -18;                                                            // выцветшая плёнка
+ip.colorCurves = curves;
+let ssao = null, glow = null, fx = null;
 
 function applyQuality(q) {
   engine.setHardwareScalingLevel(q === "low" ? (isTouch ? 1.4 : 1.35) : 1);
@@ -68,6 +78,16 @@ function applyQuality(q) {
     scene.postProcessRenderPipelineManager.detachCamerasFromRenderPipeline("ssao", [player.camera]);
     ssao.dispose(); ssao = null;
   }
+  // свечение ламп, окон, пламени: дешёвый размытый проход в четверть экрана
+  if (q !== "low" && !glow) {
+    glow = new GlowLayer("glow", scene, { mainTextureRatio: q === "high" ? 0.5 : 0.25, blurKernelSize: 32 });
+    glow.intensity = 0.55;
+    glow.customEmissiveColorSelector = (mesh, sub, mat, out) => {
+      const e = mat && mat.emissiveColor;
+      if (e && (e.r + e.g + e.b) > 0.05 && !/^Facade|Sky|Snow/.test(mat.name)) out.set(e.r, e.g, e.b, 1); else out.set(0, 0, 0, 0);
+    };
+  } else if (q === "low" && glow) { glow.dispose(); glow = null; }
+  if (fx) fx.quality(q);
   world.mirrorsAllowed = q !== "low";
   player.light.shadowEnabled = q !== "low";
   player.shadows.getShadowMap().refreshRate = q === "high" ? 1 : 2;
@@ -76,6 +96,7 @@ function applyQuality(q) {
 
 function applySettings() {
   player.sens = settings.sens;
+  story.difficulty = settings.difficulty;
   ip.exposure = settings.bright;
   for (const k of ["master", "ambience", "effects"]) audio.setVolume(k, settings[k]);
   applyQuality(settings.quality);
@@ -92,6 +113,13 @@ function buildSettings(el) {
     ["effects", "Эффекты и голоса", 0, 1, 0.05],
   ];
   el.innerHTML = "";
+  const ld = document.createElement("label");
+  ld.textContent = "Сложность ";
+  const sd = document.createElement("select");
+  sd.innerHTML = '<option value="easy">Лёгкая — с подсказками</option><option value="normal">Обычная</option><option value="hard">Тяжёлая — без подсказок</option>';
+  sd.value = settings.difficulty; sd.dataset.key = "difficulty";
+  sd.addEventListener("change", () => { settings.difficulty = sd.value; saveSettings(); applySettings(); syncSettings(); });
+  ld.appendChild(sd); el.appendChild(ld);
   for (const [key, label, min, max, step] of rows) {
     const l = document.createElement("label");
     l.textContent = label + " ";
@@ -132,6 +160,17 @@ async function boot() {
   $("loading-bar").style.width = "100%";
   const all = scene.meshes.filter((m) => m.isEnabled() && m.isVisible && m.name !== "playerBody" && !world.extMeshes.includes(m));
   world.setMirrorRenderList(all);
+  fx = setupFX(scene, world, player, lightModels);
+  // звук за стеной глуше: луч от уха к источнику
+  const walls = world.collidable;
+  audio.occluder = (pos) => {
+    const c = player.camera.position, dx = pos.x - c.x, dy = pos.y - c.y, dz = pos.z - c.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 0.8 || len > 30) return 0;
+    const ray = new Ray(c, new BABYLON_V(dx / len, dy / len, dz / len), len - 0.3);
+    const hit = scene.pickWithRay(ray, (m) => walls.includes(m), true);
+    return hit && hit.hit ? 1 : 0;
+  };
   applySettings();
   // камера во время меню смотрит в коридор
   player.teleport(world.pos("Spawn_Loop"), 0);
@@ -142,7 +181,7 @@ async function boot() {
   $("loading").classList.add("hidden");
   $("start").classList.remove("hidden");
   const save = loadSave();
-  if (save && save.chapter > 0 && save.chapter < 5) {
+  if (save && save.chapter > 0 && save.chapter < story.chapters.length) {
     $("continue").textContent = `Продолжить — глава ${save.chapter + 1}`;
     $("continue").classList.remove("hidden");
     $("start").textContent = "Новая игра";
@@ -165,6 +204,9 @@ function frame() {
     world.update(dt, t, player.position);
     entity.update(dt, t);
     if (playing) story.update(dt);
+    if (fx) fx.update(dt, t);
+    // акустика: квартира / подъезд / улица
+    if (audio.ctx) { const p = player.position; audio.setSpace(p.y < -3 ? "street" : -p.z > 13.4 ? "stair" : "room"); }
   }
   const f = playing ? story.fear : 0.1;
   if (audio.ctx) audio.setFear(f);
@@ -189,7 +231,7 @@ function frame() {
     if (frameN % 3 === 0) {
       const id = lookAtId();
       const nh = id && story.handlers[id] ? id : null;
-      if (nh !== hovered) { outline(hovered, false); outline(nh, true); }
+      if (nh !== hovered) { outline(hovered, false); if (settings.difficulty !== "hard") outline(nh, true); }
       hovered = nh;
       const h = hovered && story.handlers[hovered];
       ui.prompt(h ? (isTouch ? h.label : `[E] ${h.label}`) : "");
@@ -203,6 +245,11 @@ function frame() {
     if (near !== M.near) { M.rt.refreshRate = near ? 3 : 0; M.rt.resetRefreshCounter(); M.near = near; }
   }
   scene.render();
+  if (dev.fps && frameN % 15 === 0) {
+    const p = player.position;
+    $("fps").textContent = `${engine.getFps().toFixed(0)} fps  ${scene.getActiveMeshes().length} mesh
+x ${p.x.toFixed(2)} y ${(-p.z).toFixed(2)} z ${p.y.toFixed(2)}  гл.${story.loop + 1} ${entity.state}`;
+  }
 }
 
 // тонкий контур у предмета, с которым можно взаимодействовать
@@ -252,7 +299,8 @@ function setPaused(p) {
 }
 document.addEventListener("pointerlockchange", () => { if (!isTouch) setPaused(document.pointerLockElement !== canvas); });
 $("resume").addEventListener("click", () => { if (isTouch) setPaused(false); else lockPointer(); });
-$("pause-btn").addEventListener("click", () => setPaused(true));
+let devHeld = false;
+$("pause-btn").addEventListener("click", () => { if (devHeld) { devHeld = false; return; } setPaused(true); });
 $("retry").addEventListener("click", () => { lockPointer(); story.retry(); });
 $("restart-ch").addEventListener("click", () => { setPaused(false); lockPointer(); story.runLoop(story.loop); });
 
@@ -310,7 +358,7 @@ $("start").addEventListener("click", () => {
 });
 $("continue").addEventListener("click", () => { const s = loadSave(); startGame(s ? s.chapter : 0); });
 
-async function startGame(chapter) {
+async function startGame(chapter, quick = false) {
   audio.start({ master: settings.master, ambience: settings.ambience, effects: settings.effects });
   audio.ambience();
   applySettings();
@@ -321,7 +369,7 @@ async function startGame(chapter) {
   ui.show("title", false);
   ui.show("intro", true);
   document.body.classList.add("playing");
-  const skip = { skip: chapter > 0 };
+  const skip = { skip: chapter > 0 || quick };
   // заставку пропускает только кнопка — случайный тап или клавиша её не сбрасывают
   $("skip-intro").onclick = () => (skip.skip = true);
   await ui.typewrite("intro-text",
@@ -330,7 +378,7 @@ async function startGame(chapter) {
     "Мне было десять. Ей — шесть.\n\n" +
     "Нотариус сказал: заберите вещи и мамину машину.\n" +
     "Я приехал вечером, в метель. Хотел только переночевать.", 30, skip);
-  await new Promise((r) => setTimeout(r, skip.skip ? 300 : 2200));
+  await new Promise((r) => setTimeout(r, quick ? 0 : skip.skip ? 300 : 2200));
   ui.show("intro", false);
   ui.fade(1, 0.01);
   ui.hud(true);
@@ -367,6 +415,53 @@ async function ending() {
   a.innerHTML = '<a href="https://t.me/w_dtc" target="_blank" rel="noopener">написать разработчику в Telegram</a>';
   $("ending-text").appendChild(a);
 }
+
+// ---------------- меню разработчика ----------------
+const dev = { fps: false };
+function buildDev() {
+  const box = $("dev-chapters");
+  box.innerHTML = "";
+  const items = story.chapters.map((name, i) => [`${i + 1}. ${name}`, i, null]);
+  items.push(["6b. Двор: сразу к машине", 5, "car"], ["6c. Финал: поездка", 5, "drive"]);
+  for (const [label, n, sub] of items) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", () => devJump(n, sub));
+    box.appendChild(b);
+  }
+}
+function devJump(n, sub) {
+  toggleDev(false);
+  story.devSub = sub;
+  ui.show("death", false); ui.show("ending", false);
+  if (!playing) { startGame(n, true); return; }
+  if (clock.paused) setPaused(false);
+  story.dead = false; story.ended = false;
+  ui.fade(0, 0.6);
+  story.runLoop(n);
+  lockPointer();
+}
+window.game.devJump = devJump;
+function toggleDev(v = $("dev").classList.contains("hidden")) {
+  $("dev").classList.toggle("hidden", !v);
+  if (v) { buildDev(); if (document.pointerLockElement) document.exitPointerLock(); }
+}
+window.addEventListener("keydown", (e) => {
+  if (e.code === "F2" || (e.ctrlKey && e.shiftKey && e.code === "KeyD")) { e.preventDefault(); toggleDev(); }
+});
+$("dev-close").addEventListener("click", () => { toggleDev(false); if (playing && !isTouch) lockPointer(); });
+$("dev-god").addEventListener("change", (e) => (story.god = e.target.checked));
+$("dev-fast").addEventListener("change", (e) => (player.devSpeed = e.target.checked ? 2 : 1));
+$("dev-fps").addEventListener("change", (e) => { dev.fps = e.target.checked; ui.show("fps", dev.fps); });
+// телефон: удержать кнопку паузы 1 с или 5 раз быстро коснуться заголовка на титуле
+let holdT = null;
+$("pause-btn").addEventListener("pointerdown", () => { devHeld = false; holdT = setTimeout(() => { holdT = null; devHeld = true; toggleDev(true); }, 1000); });
+$("pause-btn").addEventListener("pointerup", () => clearTimeout(holdT));
+let taps = [];
+document.querySelector("#title h1").addEventListener("pointerdown", () => {
+  const now = performance.now(); taps = taps.filter((t) => now - t < 1500); taps.push(now);
+  if (taps.length >= 5) { taps = []; toggleDev(true); }
+});
 
 boot().catch((e) => {
   console.error(e);

@@ -80,6 +80,8 @@ export class World {
     this._setupDoors();
     // дверца холодильника стоит у стены: открываем не дальше ~75°, иначе уходит в стену
     if (this.doors.Fridge_Door) this.doors.Fridge_Door.max = 1.3;
+    // кладовка узкая: дверь открывается в коридор, иначе изнутри её не закрыть
+    if (this.doors.Door_Closet) { this.doors.Door_Closet.dir = 1; this.doors.Door_Closet.max = 1.45; }
     this._setupMirrors();
     this._setupProps();
     this.tvTex = new DynamicTexture("tvsnow", { width: 128, height: 96 }, scene, false);
@@ -293,7 +295,7 @@ export class World {
     for (const m of c.materials) {
       m.fogEnabled = false;
       m.backFaceCulling = true;          // стены нашего дома не видны изнутри квартиры
-      m.maxSimultaneousLights = this.mobile ? 3 : 5;
+      m.maxSimultaneousLights = this.mobile ? 6 : 10;
       if (m.name === "Sky") { m.disableLighting = true; m.emissiveColor = new Color3(1, 1, 1); m.backFaceCulling = false; }
       if (/^Facade/.test(m.name)) { this.facadeMats.push(m); m.emissiveColor = new Color3(1, 1, 1); }
       if (m.name === "Sodium") this.sodiumMat = m;
@@ -303,7 +305,8 @@ export class World {
       const top = this._top(m);
       if (top && top.name === "Ext_Colliders") { m.isVisible = false; m.checkCollisions = true; }
       if (top && top.name === "Ext_Car_Drive") { m.metadata = { id: "I_Car" }; m.isPickable = true; }
-      else m.freezeWorldMatrix();
+      else if (top && /^I_/.test(top.name)) { m.metadata = { id: top.name }; m.isPickable = true; }
+      else if (!(top && /^Ext_(Swing|PassCar|CarDrift)$/.test(top.name))) m.freezeWorldMatrix();
     }
     // натриевые фонари светят только на улицу
     this.street = [];
@@ -314,8 +317,18 @@ export class World {
       l.diffuse = new Color3(1.0, 0.55, 0.22); l.specular = new Color3(1.0, 0.6, 0.3);
       l.intensity = 120; l.range = 30;
       l.includedOnlyMeshes = meshes;
-      this.street.push({ light: l, base: 120, level: 1, flicker: 0 });
+      this.street.push({ light: l, base: 120, level: 1, flicker: 0, dead: false });
     }
+    // свет в открытом гараже (огонь всегда включён, меняется только яркость — без пересборки шейдеров)
+    const gp = this.nodes.Garage_Light ? this.pos("Garage_Light") : B(-24, -7.65, -4.2);
+    this.garageLight = new PointLight("garageL", gp, scene);
+    this.garageLight.diffuse = new Color3(1.0, 0.75, 0.45); this.garageLight.intensity = 0; this.garageLight.range = 9;
+    this.garageLight.includedOnlyMeshes = meshes;
+    this.garageOn = 0;
+    // фары проезжающей машины
+    this.passLight = new PointLight("passL", B(12, -40, -5.6), scene);
+    this.passLight.diffuse = new Color3(1, 0.9, 0.7); this.passLight.intensity = 0; this.passLight.range = 14;
+    this.passLight.includedOnlyMeshes = meshes;
     const moon = (this.moon = new HemisphericLight("moon", new Vector3(0.3, 1, 0.2), scene));
     moon.intensity = 0.25; moon.diffuse = new Color3(0.55, 0.6, 0.8); moon.groundColor = new Color3(0.12, 0.08, 0.07);
     moon.specular = Color3.Black();
@@ -398,6 +411,74 @@ export class World {
     });
   }
 
+  // ---------------- живой двор ----------------
+  resetYard() {
+    this.yard = null;
+    this.setGarage(false);
+    this.setDrift(1);
+    this.show("I_Shovel", true);
+    if (this.street) for (const S of this.street) S.dead = false;
+    if (this.passCar) { this.passCar.stop(); this.passCar = null; }
+  }
+
+  // качели скрипят, собака лает, по улице проезжает машина, кто-то в окне
+  yardLife(on) {
+    this.yard = on ? { t: 0, bark: 6, horn: 40, pass: 12, swing: 0, amp: 0.25 } : null;
+  }
+
+  setGarage(on, broken = false) { this.garageOn = on ? 1 : 0; this.garageBroken = broken; }
+
+  setDrift(k) {
+    const n = this.nodes.Ext_CarDrift; if (!n) return;
+    n.setEnabled(k > 0.02);
+    n.scaling.y = Math.max(0.05, k);
+  }
+
+  // фонари рядом с сущностью гаснут навсегда
+  dimNear(p, r = 5) {
+    if (!this.street) return;
+    for (const S of this.street) {
+      if (S.dead) continue;
+      const q = S.light.position;
+      if (Math.hypot(q.x - p.x, q.z - p.z) < r) { S.dead = true; S.flicker = 0.8; if (this.audio.ctx) this.audio.bulbPop(this.xyzOf(q)); }
+    }
+  }
+
+  _yardUpdate(dt, t, pp) {
+    const Y = this.yard; if (!Y || !this.audio.ctx) return;
+    Y.t += dt;
+    // качели
+    const sw = this.nodes.Ext_Swing;
+    if (sw) {
+      Y.amp += (Math.sin(Y.t * 0.13) * 0.18 + 0.28 - Y.amp) * dt * 0.3;
+      const prev = Y.swing;
+      Y.swing = Math.sin(Y.t * 1.55) * Y.amp;
+      if (!sw.rotationQuaternion) sw.rotation.x = Y.swing;
+      else sw.rotationQuaternion = Quaternion.RotationAxis(Axis.X, Y.swing);
+      if (Math.sign(Y.swing - prev) !== Math.sign(Y.last || 0) && pp && Vector3.Distance(sw.position, pp) < 30) this.audio.swingCreak(this.xyz("Ext_Swing", -0.2), Y.amp);
+      Y.last = Y.swing - prev;
+    }
+    // собака где-то за домами
+    Y.bark -= dt;
+    if (Y.bark <= 0) { Y.bark = rnd(9, 22); this.audio.dog(this.xyzOf(B(rnd(-60, 60), rnd(30, 70), -5.5)), Math.floor(rnd(2, 5))); }
+    // далёкий гудок поезда
+    Y.horn -= dt;
+    if (Y.horn <= 0) { Y.horn = rnd(50, 90); this.audio.trainHorn(this.xyzOf(B(-80, 60, 0))); }
+    // машина проезжает мимо и не останавливается
+    Y.pass -= dt;
+    const car = this.nodes.Ext_PassCar;
+    if (car && Y.pass <= 0 && !Y.driving) { Y.driving = { y: -45 }; Y.pass = rnd(45, 80); this.passCar = this.audio.carPass(); }
+    if (car && Y.driving) {
+      Y.driving.y += dt * 11;
+      const pos = B(12, Y.driving.y, -6.3);
+      car.position.copyFrom(pos);
+      this.passLight.position.copyFrom(B(12, Y.driving.y + 3.5, -5.6));
+      this.passLight.intensity = 40;
+      if (this.passCar) this.passCar.move(this.xyzOf(B(12, Y.driving.y, -5.8)));
+      if (Y.driving.y > 60) { Y.driving = null; this.passLight.intensity = 0; if (this.passCar) { this.passCar.stop(); this.passCar = null; } car.position.copyFrom(B(12, -200, -6.3)); }
+    }
+  }
+
   setOutside({ windows, lamps, storm } = {}) {
     if (windows !== undefined) this.outside.windows = windows;
     if (lamps !== undefined) this.outside.lamps = lamps;
@@ -444,10 +525,16 @@ export class World {
       ctx.putImageData(img, 0, 0); this.tvTex.update();
       this.tvLight.intensity = rnd(0.6, 1.5);
     }
+    if (this.garageLight) {
+      let g = this.garageOn;
+      if (g && Math.random() < 0.06) g *= rnd(0.2, 0.8);
+      this.garageLight.intensity += (g * 9 - this.garageLight.intensity) * Math.min(1, dt * 20);
+    }
+    this._yardUpdate(dt, t, playerPos);
     if (this.street) {
       const o = this.outside;
       for (const S of this.street) {
-        S.level += (o.lamps - S.level) * Math.min(1, dt * 3);
+        S.level += ((S.dead ? 0 : o.lamps) - S.level) * Math.min(1, dt * (S.dead ? 1.2 : 3));
         let v = S.level;
         if (o.lamps > 0 && Math.random() < 0.002) S.flicker = 0.6;
         if (S.flicker > 0) { S.flicker -= dt; if (Math.random() < 0.4) v *= 0.1; }

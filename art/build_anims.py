@@ -136,6 +136,47 @@ def peek(t, T):
     return p
 
 
+def scratch(t, T):
+    """Упёрлось лбом в дверь: руки вверх, пальцы скребут, голова бьётся."""
+    ph = TAU * t / T
+    p = base_pose()
+    p["spine1"][0] += 0.1; p["spine2"][0] += 0.15; p["chest"][0] += 0.1
+    p["head"][0] += 0.35 + 0.12 * max(0.0, math.sin(ph * 2)) ** 8   # удар лбом
+    p["head"][2] = 0.2 * math.sin(ph * 0.5) + tremor(ph, 0.05)
+    p["jaw"][0] = 0.45 + 0.25 * math.sin(ph * 3) + tremor(ph * 2, 0.05)
+    for s_, sx in SIDES:
+        f = ph * 2 + (0 if sx > 0 else math.pi * 0.7)
+        p[f"upperarm.{s_}"][0] += 1.9 + 0.12 * math.sin(f)
+        p[f"upperarm.{s_}"][2] = 0.25 * sx
+        p[f"forearm.{s_}"][0] = 0.5 + 0.35 * math.sin(f)              # скребёт сверху вниз
+        p[f"hand.{s_}"][0] = -0.4 + 0.3 * math.sin(f + 0.6)
+        for i in range(4):
+            p[f"finger{i}a.{s_}"][0] = 0.3 + 0.5 * math.sin(f + i * 0.4)
+            p[f"finger{i}b.{s_}"][0] = 0.6 + 0.5 * math.sin(f + i * 0.4 + 0.5)
+    p["__loc"][1] = -0.05 + 0.01 * math.sin(ph * 2)
+    return p
+
+
+def hunt(t, T):
+    """Охота: рваная, «сломанная» походка — длинный шаг, рывок головы, руки висят до колен."""
+    ph = TAU * t / T
+    p = walk(t, T)
+    p["spine1"][0] += 0.12; p["chest"][0] += 0.1
+    p["head"][0] -= 0.25
+    p["head"][2] += 0.6 * (snap(t, 8, 1) - snap(t, 12, 6)) - 0.5 * (snap(t, 27, 1) - snap(t, 31, 8))
+    p["neck"][1] = 0.4 * (snap(t, 18, 1) - snap(t, 24, 6))
+    for s_, sx in SIDES:
+        f = ph if sx > 0 else ph + math.pi
+        p[f"upperarm.{s_}"][0] = 0.1 - 0.2 * math.sin(f - 0.6)
+        p[f"forearm.{s_}"][0] = 0.05
+        for i in range(4):
+            p[f"finger{i}a.{s_}"][0] = 0.4 + 0.25 * math.sin(ph * 6 + i)
+    # хромает: одна нога короче
+    p["__loc"][1] += 0.03 * max(0.0, math.sin(ph))
+    p["pelvis"][2] = 0.08 * math.sin(ph)
+    return p
+
+
 def bake(name, fn, frames, loop=True):
     act = bpy.data.actions.get(name)
     if act:
@@ -164,7 +205,7 @@ def bake(name, fn, frames, loop=True):
 
 
 ACTIONS = [("Idle", idle, 120, True), ("Walk", walk, 40, True), ("Run", run, 22, True),
-           ("Attack", attack, 36, False), ("Peek", peek, 60, True)]
+           ("Attack", attack, 36, False), ("Peek", peek, 60, True), ("Scratch", scratch, 50, True), ("Walk", hunt, 40, True)]
 for name, fn, n, loop in ACTIONS:
     bake(name, fn, n, loop)
 rig.animation_data.action = bpy.data.actions["Idle"]

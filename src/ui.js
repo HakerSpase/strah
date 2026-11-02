@@ -30,10 +30,14 @@ export const ui = {
     this._subT = setTimeout(() => (s.style.opacity = 0), sec * 1000);
   },
 
-  objective(text) {
+  objective(text, hint) {
     const o = $("objective");
     o.style.opacity = 0;
-    setTimeout(() => { o.textContent = text || ""; o.style.opacity = text ? 1 : 0; }, 700);
+    setTimeout(() => {
+      o.textContent = text || "";
+      if (text && hint) { const h = document.createElement("span"); h.className = "hint-line"; h.textContent = hint; o.appendChild(h); }
+      o.style.opacity = text ? 1 : 0;
+    }, 700);
   },
 
   prompt(text) { $("prompt").textContent = text || ""; },

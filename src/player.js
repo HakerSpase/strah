@@ -127,7 +127,7 @@ export class Player {
       if (this.touch && (this.touch.x || this.touch.y)) { mv.addInPlace(fwd.scale(this.touch.y)); mv.addInPlace(right.scale(this.touch.x)); }
       const moving = mv.lengthSquared() > 0.01;
       const run = moving && (k.ShiftLeft || k.ShiftRight || (this.touch && this.touch.run)) && this.stamina > 0.05 && !this.noRun;
-      const target = moving ? (run && !this.crouch ? 3.4 : this.crouch ? 0.9 : 1.55) * (this.speedMul || 1) * Math.min(1, mv.length()) : 0;
+      const target = moving ? (run && !this.crouch ? 3.4 : this.crouch ? 0.9 : 1.55) * (this.speedMul || 1) * (this.devSpeed || 1) * Math.min(1, mv.length()) : 0;
       if (moving) mv.normalize();
       this.vel.x = lerp(this.vel.x, mv.x * target, Math.min(1, dt * 9));
       this.vel.z = lerp(this.vel.z, mv.z * target, Math.min(1, dt * 9));
