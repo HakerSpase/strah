@@ -50,6 +50,10 @@ export class Entity {
       if (m.material) {
         m.material.maxSimultaneousLights = 8;
         if (/Hair|Dress/.test(m.material.name)) m.material.backFaceCulling = false;
+        // кожа: серее и влажнее — под фонарём не пересвечивается в белое пятно
+        if (/Skin/.test(m.material.name) && m.material.albedoColor && !m.material._k14) {
+          m.material._k14 = true; m.material.albedoColor.scaleInPlace(0.62); m.material.roughness = 0.42; m.material.metallic = 0;
+        }
       }
       this.player.shadows.addShadowCaster(m);
     }

@@ -25,6 +25,8 @@ const DEFAULTS = { difficulty: "normal", fx: "strong", sens: 1, bright: 1, maste
 let settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem("k14-settings") || "{}")); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem("k14-settings", JSON.stringify(settings)); } catch (e) {} };
+const TRAILER = new URLSearchParams(location.search).has("trailer");
+if (TRAILER) Object.assign(settings, { quality: "high", fx: "strong", bright: 1.15 });
 const bootQuality = settings.quality;
 const lightModels = bootQuality === "low";
 
@@ -187,14 +189,15 @@ async function boot() {
     $("start").textContent = "Новая игра";
   }
   $("settings").classList.remove("hidden");
-  engine.runRenderLoop(frame);
+  engine.runRenderLoop(() => frame());
+  if (TRAILER) import("./trailer.js").then((m) => m.runTrailer({ ...window.game, engine, frame, startGame, setPlaying: (v) => (playing = v) }));
 }
 
 // ---------------- игровой цикл ----------------
 let last = performance.now(), heartT = 0, playing = false, frameN = 0, hovered = null;
-function frame() {
+function frame(fixedDt) {
   const now = performance.now();
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const dt = fixedDt ?? Math.min(0.05, (now - last) / 1000);
   last = now;
   frameN++;
   if (!clock.paused) clock.t += dt;
@@ -361,6 +364,8 @@ $("continue").addEventListener("click", () => { const s = loadSave(); startGame(
 async function startGame(chapter, quick = false) {
   audio.start({ master: settings.master, ambience: settings.ambience, effects: settings.effects });
   audio.ambience();
+  await audio.loadVoices();
+  ui.onSay = (text) => audio.speak(text);
   applySettings();
   if (isTouch) {
     try { await document.documentElement.requestFullscreen(); } catch (e) {}
@@ -371,7 +376,8 @@ async function startGame(chapter, quick = false) {
   document.body.classList.add("playing");
   const skip = { skip: chapter > 0 || quick };
   // заставку пропускает только кнопка — случайный тап или клавиша её не сбрасывают
-  $("skip-intro").onclick = () => (skip.skip = true);
+  $("skip-intro").onclick = () => { skip.skip = true; if (audio.heroSrc) try { audio.heroSrc.stop(); } catch (e) {} };
+  if (!skip.skip) audio.speak("@intro");
   await ui.typewrite("intro-text",
     "Декабрь. Мама умерла сорок дней назад.\n\n" +
     "Я не был в этой квартире с девяносто восьмого года — с той ночи, когда пропала моя сестра Аня.\n" +
@@ -398,6 +404,7 @@ async function ending() {
   ui.show("touch", false);
   if (document.exitPointerLock) document.exitPointerLock();
   ui.show("ending", true);
+  audio.speak("@ending");
   await ui.typewrite("ending-text",
     "Я гнал до самого утра, не глядя в зеркало заднего вида.\n\n" +
     "Через неделю квартиру 14 продали.\n" +

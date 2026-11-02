@@ -604,6 +604,45 @@ export class Audio {
     };
   }
 
+  // ---------------- озвучка (ElevenLabs, файлы в /voice) ----------------
+  async loadVoices(base = "/voice/") {
+    try { this.voiceIdx = await (await fetch(base + "index.json")).json(); this.voiceBase = base; } catch (e) { this.voiceIdx = {}; }
+    this.voiceBufs = {};
+  }
+
+  /** Сказать реплику по тексту субтитра. Герой — сухо и близко; Аня и «мама» — с обработкой: чужие, неправильные. */
+  async speak(key) {
+    const v = this.voiceIdx && this.voiceIdx[key];
+    if (!v || !this.ctx) return;
+    let buf = this.voiceBufs[v.f];
+    if (!buf) {
+      try { buf = this.voiceBufs[v.f] = await this.ctx.decodeAudioData(await (await fetch(this.voiceBase + v.f)).arrayBuffer()); } catch (e) { return; }
+    }
+    const ctx = this.ctx, t = this.now;
+    if (v.v === "hero" && this.heroSrc) { try { this.heroSrc.stop(); } catch (e) {} }
+    const dur = buf.duration;
+    if (v.v === "hero") {
+      const out = this._out(null, { wet: 0.12, life: dur + 2 }); out.gain.value = 1.1;
+      const s = this._src(buf); s.connect(out); s.start(t); this.heroSrc = s;
+    } else if (v.v === "child") {
+      // детский голос из ниоткуда: тоньше, с эхом квартиры, будто через стену
+      const out = this._out(null, { wet: 0.75, life: dur * 1.2 + 3, bus: "fx" }); out.gain.value = 1.0;
+      const s = this._src(buf, false, 1.06);
+      s.connect(this._filter("highpass", 260)).connect(this._filter("peaking", 2600, 1)).connect(out); s.start(t);
+    } else {
+      // «мама»: ниже, раздвоено (второй голос чуть отстаёт и ещё ниже), шёпот под ним
+      const out = this._out(null, { wet: 0.6, life: dur * 1.3 + 3, hrtf: false }); out.gain.value = 1.2;
+      const a = this._src(buf, false, 0.86), b = this._src(buf, false, 0.81);
+      const gb = ctx.createGain(); gb.gain.value = 0.45;
+      const lp = this._filter("lowpass", 3800, 0.7);
+      a.connect(lp); b.connect(gb).connect(lp); lp.connect(out);
+      a.start(t); b.start(t + 0.045);
+      this.whisper(null, dur * 1.1, 0.25);
+    }
+    // музыка и гул притихают под голосом
+    if (this.musicGain) { this.amb.gain.setTargetAtTime(this.vol.ambience * 0.55, t, 0.2); this.amb.gain.setTargetAtTime(this.vol.ambience, t + dur + 0.3, 0.8); }
+  }
+
   // ---------------- новые звуки ----------------
   /** Ногти по дереву: длинный скрежет с «зацепами». */
   scratch(pos, dur = 1.2) {

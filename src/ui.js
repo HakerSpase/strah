@@ -23,6 +23,7 @@ export const ui = {
   _subT: null,
   say(text, { voice = false, sec = 4 } = {}) {
     const s = $("subtitle");
+    if (this.onSay) this.onSay(text, voice);
     s.textContent = text;
     s.className = voice ? "voice" : "";
     s.style.opacity = 1;
