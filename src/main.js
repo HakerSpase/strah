@@ -180,6 +180,10 @@ async function boot() {
   $("loading-bar").style.width = "100%";
   const all = scene.meshes.filter((m) => m.isEnabled() && m.isVisible && m.name !== "playerBody" && !world.extMeshes.includes(m));
   world.setMirrorRenderList(all);
+  // не больше 8 источников света на материал: иначе шейдер не влезает в лимит видеокарты (12 блоков) и объект не рисуется
+  const clampLights = (m) => { if (m.maxSimultaneousLights > 8) m.maxSimultaneousLights = 8; };
+  scene.materials.forEach(clampLights);
+  scene.onNewMaterialAddedObservable.add(clampLights);
   fx = setupFX(scene, world, player, lightModels);
   // звук за стеной глуше: луч от уха к источнику
   const walls = world.collidable;

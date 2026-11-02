@@ -412,13 +412,13 @@ export class World {
   async _loadHouses(base, meshes) {
     const PI = Math.PI;
     const P = [
-      { f: "house_a", x: 0, y: -36.5, len: 60, yaw: 0, hide: "Ext_House_S", col: false },
-      { f: "house_b", x: -48, y: 5, len: 60, yaw: PI / 2, hide: "Ext_House_W", col: false },
-      { f: "house_a", x: 40, y: 10, len: 60, yaw: -PI / 2, hide: "Ext_House_E", col: false },
+      { f: "house_a", x: 0, y: -37, len: 92, yaw: 0, hide: "Ext_House_S", col: false },
+      { f: "house_b", x: -49, y: 6, len: 86, yaw: PI / 2, hide: "Ext_House_W", col: false },
+      { f: "house_a", x: 41, y: 8, len: 92, yaw: -PI / 2, hide: "Ext_House_E", col: false },
       // просветы между домами — ещё дома и школа: края карты не видно
-      { f: "school", x: 0, y: 46, len: 42, yaw: 0, col: false },
-      { f: "house_b", x: -30, y: 47, len: 34, yaw: 0, col: false },
-      { f: "house_b", x: 28, y: 50, len: 34, yaw: 0, col: false },
+      { f: "school", x: 0, y: 48, len: 48, yaw: 0, col: false },
+      { f: "house_b", x: -38, y: 54, len: 60, yaw: 0, col: false },
+      { f: "house_b", x: 36, y: 56, len: 60, yaw: 0, col: false },
       { f: "house_b", x: 41, y: -34, len: 24, yaw: -PI / 2, col: false },
       { f: "house_b", x: -40, y: -36, len: 22, yaw: PI / 2, col: false },
       // детская площадка
