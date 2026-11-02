@@ -295,7 +295,7 @@ export class World {
     for (const m of c.materials) {
       m.fogEnabled = false;
       m.backFaceCulling = true;          // стены нашего дома не видны изнутри квартиры
-      m.maxSimultaneousLights = this.mobile ? 6 : 10;
+      m.maxSimultaneousLights = this.mobile ? 6 : 8;       // фонарик + фонари + луна + гараж + фары; больше — не влезает в лимит шейдера
       if (m.name === "Sky") { m.disableLighting = true; m.emissiveColor = new Color3(1, 1, 1); m.backFaceCulling = false; }
       if (/^Facade/.test(m.name)) { this.facadeMats.push(m); m.emissiveColor = new Color3(1, 1, 1); }
       if (m.name === "Sodium") this.sodiumMat = m;
@@ -310,8 +310,8 @@ export class World {
     }
     // натриевые фонари светят только на улицу
     this.street = [];
-    const n = this.mobile ? 3 : 6;
-    for (let i = 0; i < n; i++) {
+    // настоящий свет — только у фонарей, где идёт игра; остальные просто светятся
+    for (const i of this.mobile ? [0, 3] : [0, 1, 3, 4]) {
       if (!this.nodes["SL_" + i]) continue;
       const l = new PointLight("SL" + i, this.pos("SL_" + i), scene);
       l.diffuse = new Color3(1.0, 0.55, 0.22); l.specular = new Color3(1.0, 0.6, 0.3);
