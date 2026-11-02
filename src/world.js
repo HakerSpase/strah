@@ -292,6 +292,7 @@ export class World {
     const meshes = (this.extMeshes = c.meshes.filter((m) => m.name !== "__root__"));
     for (const n of [...c.transformNodes, ...c.meshes]) this.nodes[n.name] = n;
     this.facadeMats = [];
+    this.extMats = c.materials;
     for (const m of c.materials) {
       m.fogEnabled = false;
       m.backFaceCulling = true;          // стены нашего дома не видны изнутри квартиры
@@ -464,18 +465,27 @@ export class World {
     // далёкий гудок поезда
     Y.horn -= dt;
     if (Y.horn <= 0) { Y.horn = rnd(50, 90); this.audio.trainHorn(this.xyzOf(B(-80, 60, 0))); }
-    // машина проезжает мимо и не останавливается
+    // машина въезжает по дороге с севера, останавливается в конце двора, светит фарами — и уезжает обратно.
+    // Маршрут только по пустой дороге x=12 (Blender): ни через дома, ни через фонари и сугробы.
     Y.pass -= dt;
     const car = this.nodes.Ext_PassCar;
-    if (car && Y.pass <= 0 && !Y.driving) { Y.driving = { y: -45 }; Y.pass = rnd(45, 80); this.passCar = this.audio.carPass(); }
+    if (car && Y.pass <= 0 && !Y.driving) { Y.driving = { y: 85, yaw: Math.PI, phase: "in", t: 0 }; Y.pass = rnd(55, 90); this.passCar = this.audio.carPass(); }
     if (car && Y.driving) {
-      Y.driving.y += dt * 11;
-      const pos = B(12, Y.driving.y, -6.3);
-      car.position.copyFrom(pos);
-      this.passLight.position.copyFrom(B(12, Y.driving.y + 3.5, -5.6));
-      this.passLight.intensity = 40;
-      if (this.passCar) this.passCar.move(this.xyzOf(B(12, Y.driving.y, -5.8)));
-      if (Y.driving.y > 60) { Y.driving = null; this.passLight.intensity = 0; if (this.passCar) { this.passCar.stop(); this.passCar = null; } car.position.copyFrom(B(12, -200, -6.3)); }
+      const D = Y.driving;
+      D.t += dt;
+      if (D.phase === "in") { const v = Math.max(1.5, Math.min(12, (D.y + 3) * 0.6)); D.y -= v * dt; if (D.y <= -3) { D.phase = "wait"; D.t = 0; } }
+      else if (D.phase === "wait") { if (D.t > 4.5) { D.phase = "turn"; D.t = 0; } }
+      else if (D.phase === "turn") { const k = Math.min(1, D.t / 3); D.yaw = Math.PI * (1 - k); D.y += dt * 1.2; if (k >= 1) { D.phase = "out"; D.t = 0; } }
+      else { D.y += dt * Math.min(12, 2 + D.t * 4); }
+      const x = 12 + (D.phase === "turn" ? Math.sin(Math.min(1, D.t / 3) * Math.PI) * 1.4 : 0);
+      car.position.copyFrom(B(x, D.y, -6.3).subtract(B(12, -200, -6.3)).add(this._passBase || (this._passBase = car.position.clone())));
+      car.rotationQuaternion = Quaternion.RotationAxis(Axis.Y, D.yaw);
+      // фары смотрят туда же, куда машина
+      const fx = -Math.sin(D.yaw), fz = -Math.cos(D.yaw);
+      this.passLight.position.copyFrom(B(x, D.y, -5.6)).addInPlaceFromFloats(fx * 4, 0, fz * 4);
+      this.passLight.intensity = D.phase === "wait" ? 55 : 40;
+      if (this.passCar) this.passCar.move(this.xyzOf(B(x, D.y, -5.8)));
+      if (D.phase === "out" && D.y > 85) { Y.driving = null; this.passLight.intensity = 0; if (this.passCar) { this.passCar.stop(); this.passCar = null; } car.position.copyFrom(this._passBase); }
     }
   }
 

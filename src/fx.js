@@ -121,12 +121,50 @@ export function setupFX(scene, world, player, low) {
     fx.halos.push({ mesh: c, S });
   }
 
+  // ---------- улица: метель вокруг игрока и позёмка у земли ----------
+  const flake = dot;
+  const near = new ParticleSystem("nearSnow", low ? 500 : 2200, scene);
+  near.particleTexture = flake; near.emitter = new Vector3();
+  near.minEmitBox = new Vector3(-14, 2, -14); near.maxEmitBox = new Vector3(14, 9, 14);
+  near.direction1 = new Vector3(4.5, -2.5, -1.2); near.direction2 = new Vector3(8, -3.5, 1.2);
+  near.minEmitPower = 1; near.maxEmitPower = 1.6;
+  near.minLifeTime = 2.2; near.maxLifeTime = 3.6;
+  near.minSize = 0.012; near.maxSize = 0.04;
+  near.emitRate = low ? 220 : 900;
+  near.color1 = new Color4(1, 1, 1, 0.9); near.color2 = new Color4(0.8, 0.85, 0.95, 0.7); near.colorDead = new Color4(1, 1, 1, 0);
+  near.blendMode = ParticleSystem.BLENDMODE_STANDARD;
+  const drift = new ParticleSystem("drift", low ? 150 : 600, scene);
+  drift.particleTexture = flake; drift.emitter = new Vector3();
+  drift.minEmitBox = new Vector3(-16, 0.02, -12); drift.maxEmitBox = new Vector3(-6, 0.5, 12);
+  drift.direction1 = new Vector3(6, 0.1, -1); drift.direction2 = new Vector3(10, 0.5, 1);
+  drift.minEmitPower = 1; drift.maxEmitPower = 1.5;
+  drift.minLifeTime = 1.5; drift.maxLifeTime = 3;
+  drift.minSize = 0.008; drift.maxSize = 0.02;          // мелкая снежная пыль, которую ветер гонит по насту
+  drift.emitRate = low ? 60 : 260;
+  drift.color1 = new Color4(1, 1, 1, 0.35); drift.color2 = new Color4(0.85, 0.9, 1, 0.2); drift.colorDead = new Color4(1, 1, 1, 0);
+  const fogIn = { d: scene.fogDensity, c: scene.fogColor.clone() };
+  let outside = null;
+
   fx.quality = (q) => {
     fx.q = q;
     dust.emitRate = q === "low" ? 15 : 45;
   };
 
   fx.update = (dt, t) => {
+    // улица: туман метели на всём дворе, снег и позёмка вокруг игрока (дом сам себя не туманит изнутри)
+    const out = player.position.y < -3;
+    if (out !== outside) {
+      outside = out;
+      for (const m of world.extMats || []) m.fogEnabled = out;
+      scene.fogDensity = out ? 0.026 : fogIn.d;
+      scene.fogColor = out ? new Color3(0.19, 0.17, 0.17) : fogIn.c;      // метель, подсвеченная натриевыми фонарями
+      if (out) { near.start(); drift.start(); } else { near.stop(); drift.stop(); }
+    }
+    if (out) {
+      const pp = player.position, storm = world.outside ? world.outside.storm : 1;
+      near.emitter.copyFrom(pp); drift.emitter.copyFrom(pp);
+      near.emitRate = (fx.q === "low" ? 220 : 900) * Math.min(1.4, storm * 0.6);
+    }
     // вода
     bump.vOffset = (bump.vOffset + dt * 2.6) % 1;
     for (const [k, ps] of Object.entries(fx.splashes)) {
