@@ -1,6 +1,6 @@
 import {
   Axis, Color3, Color4, DynamicTexture, HemisphericLight, LoadAssetContainerAsync, Material, MirrorTexture,
-  MeshBuilder, ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, TransformNode, Vector3,
+  Mesh, MeshBuilder, ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, TransformNode, Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import { B, clamp, rnd } from "./util.js";
@@ -412,7 +412,7 @@ export class World {
   async _loadHouses(base, meshes) {
     const PI = Math.PI;
     const P = [
-      { f: "house_a", x: 0, y: -36.5, len: 60, yaw: PI, hide: "Ext_House_S", col: false },
+      { f: "house_a", x: 0, y: -36.5, len: 60, yaw: 0, hide: "Ext_House_S", col: false },
       { f: "house_b", x: -48, y: 5, len: 60, yaw: PI / 2, hide: "Ext_House_W", col: false },
       { f: "house_a", x: 40, y: 10, len: 60, yaw: -PI / 2, hide: "Ext_House_E", col: false },
       // просветы между домами — ещё дома и школа: края карты не видно
@@ -466,17 +466,26 @@ export class World {
       let C = cache[o.f];
       if (C === undefined) {
         try { C = cache[o.f] = await LoadAssetContainerAsync(base + o.f + ".glb", this.scene); } catch (e) { console.warn("модель не загрузилась", o.f, e); cache[o.f] = null; continue; }
-        for (const m of C.materials) { mats.push(m); m.maxSimultaneousLights = this.mobile ? 6 : 8; }
+        for (const m of C.materials) {
+          mats.push(m); m.maxSimultaneousLights = this.mobile ? 6 : 8;
+          // дома и школа — сплошные: прозрачность из текстуры на расстоянии «съедает» стены
+          if (/^(house_|school)/.test(o.f)) {
+            m.transparencyMode = 0; m.alpha = 1; m.useAlphaFromAlbedoTexture = false; m.needDepthPrePass = false;
+            if (m.albedoTexture) m.albedoTexture.hasAlpha = false;
+            m.backFaceCulling = false;
+          }
+        }
       }
       if (!C) continue;
       const tag = (o.hide || o.f) + "_" + Math.round(o.x) + "_" + Math.round(o.y);
-      const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false);
+      const bigOne = /^(house_|school)/.test(o.f);       // большие дома склеиваем — копии, не экземпляры
+      const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false, { doNotInstantiate: bigOne });
       const holder = new TransformNode(tag, this.scene), inner = new TransformNode(tag + "_fit", this.scene);
       for (const rn of inst.rootNodes) rn.parent = inner;
       inner.parent = holder;
       // из пака оставляем только нужное дерево; землю и кусты пака — прочь
       for (const m of inner.getChildMeshes(false)) {
-        if (/Plane|Bush/i.test(m.name) || (o.keep && !o.keep.test(m.name))) m.setEnabled(false);
+        if ((o.f === "firs" && /Plane|Bush/i.test(m.name)) || (o.keep && !o.keep.test(m.name))) m.setEnabled(false);
       }
       const vis = () => inner.getChildMeshes(false).filter((m) => m.isEnabled() && m.getTotalVertices() > 0);
       const bounds = () => {
@@ -515,7 +524,15 @@ export class World {
       }
       holder.position.copyFrom(B(o.x, o.y, -6.3));
       holder.rotation.y = yaw;
-      for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.freezeWorldMatrix(); m.doNotSyncBoundingInfo = true; }
+      if (bigOne) {
+        // сотни деталей дома → один объект с несколькими материалами: в разы меньше отрисовок
+        const parts = inner.getChildMeshes(false).filter((m) => m.isEnabled() && m.getTotalVertices() > 0);
+        for (const m of parts) m.computeWorldMatrix(true);
+        let merged = null;
+        try { merged = Mesh.MergeMeshes(parts, true, true, undefined, false, true); } catch (e) { console.warn("не склеилось", o.f, e); }
+        if (merged) { merged.name = tag + "_merged"; merged.isPickable = false; merged.receiveShadows = false; meshes.push(merged); merged.freezeWorldMatrix(); }
+        else for (const m of parts) { m.isPickable = false; meshes.push(m); m.freezeWorldMatrix(); }
+      } else for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.computeWorldMatrix(true); m.refreshBoundingInfo(); m.freezeWorldMatrix(); }
       if (o.hide && this.nodes[o.hide]) this.nodes[o.hide].setEnabled(false);
       // коллайдер: ствол — цилиндр, реквизит — коробка по габаритам
       if (o.col !== false) {

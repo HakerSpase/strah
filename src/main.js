@@ -159,6 +159,7 @@ function syncSettings() {
 buildSettings($("settings"));
 buildSettings($("pause-settings"));
 // меню: настройки и управление раскрываются по нажатию, одно за раз
+$("pause-settings-btn").addEventListener("click", () => { const o = $("pause-settings-panel").classList.toggle("hidden"); $("pause-settings-btn").classList.toggle("open", !o); });
 for (const [btn, panel] of [["settings-btn", "settings-panel"], ["help-btn", "help-panel"]]) {
   $(btn).addEventListener("click", () => {
     const open = $(panel).classList.contains("hidden");
@@ -196,6 +197,9 @@ async function boot() {
   world.setAllLamps(false);
   world.setLamp("Lamp_Corr3", true, { instant: true });
   world.flicker("Lamp_Corr3", 999);
+  $("loading-text").textContent = "подготовка…";
+  try { await Promise.race([scene.whenReadyAsync(), new Promise((r) => setTimeout(r, 15000))]); } catch (e) {}
+  for (let i = 0; i < 3; i++) scene.render();
   $("loading-text").classList.add("hidden");
   $("loading").classList.add("hidden");
   $("start").classList.remove("hidden");
@@ -396,7 +400,11 @@ async function startGame(chapter, quick = false) {
   document.body.classList.add("playing");
   const skip = { skip: chapter > 0 || quick };
   // заставку пропускает только кнопка — случайный тап или клавиша её не сбрасывают
-  $("skip-intro").onclick = () => { skip.skip = true; if (audio.heroSrc) try { audio.heroSrc.stop(); } catch (e) {} };
+  const doSkip = () => { skip.skip = true; if (audio.heroSrc) try { audio.heroSrc.stop(); } catch (e) {} };
+  $("skip-intro").onclick = doSkip;
+  // мышь уже захвачена игрой — на компьютере заставку пропускает пробел или Enter
+  const skipKey = (e) => { if (e.code === "Space" || e.code === "Enter") doSkip(); };
+  window.addEventListener("keydown", skipKey);
   if (!skip.skip) audio.speak("@intro");
   await ui.typewrite("intro-text",
     "Декабрь. Мама умерла сорок дней назад.\n\n" +
@@ -405,6 +413,7 @@ async function startGame(chapter, quick = false) {
     "Нотариус сказал: заберите вещи и мамину машину.\n" +
     "Я приехал вечером, в метель. Хотел только переночевать.", 30, skip);
   await new Promise((r) => setTimeout(r, quick ? 0 : skip.skip ? 300 : 2200));
+  window.removeEventListener("keydown", skipKey);
   ui.show("intro", false);
   ui.fade(1, 0.01);
   ui.hud(true);

@@ -63,15 +63,20 @@
     </div>
   </div>
 
-  <div id="intro" class="screen hidden"><div id="intro-text"></div><button id="skip-intro" class="small">Пропустить</button></div>
+  <div id="intro" class="screen hidden"><div id="intro-text"></div><button id="skip-intro" class="small">Пропустить<span class="desktop-only"> — пробел</span></button></div>
 
   <div id="pause" class="screen hidden">
-    <div class="title-inner">
-      <h2>Пауза</h2>
-      <button id="resume">Продолжить</button>
-      <div class="settings" id="pause-settings"></div>
-      <p id="reload-note" class="tip hidden">Новое качество текстур применится после перезапуска. <a href="#" id="reload-link">Перезапустить</a></p>
-      <button id="restart-ch" class="small">Начать главу заново</button>
+    <div class="title-inner menu-screen">
+      <h1>ПАУЗА</h1>
+      <nav class="menu">
+        <button id="resume">Продолжить</button>
+        <button id="pause-settings-btn">Настройки</button>
+        <button id="restart-ch">Начать главу заново</button>
+      </nav>
+      <div class="panel hidden" id="pause-settings-panel">
+        <div class="settings" id="pause-settings"></div>
+        <p id="reload-note" class="tip hidden">Новое качество текстур применится после перезапуска. <a href="#" id="reload-link">Перезапустить</a></p>
+      </div>
       <p class="credits">разработчик — <a href="https://t.me/w_dtc" target="_blank" rel="noopener">@w_dtc</a></p>
     </div>
   </div>

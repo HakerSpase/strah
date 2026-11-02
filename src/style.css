@@ -161,3 +161,4 @@ body.touch .menu button { padding: 7px 0; font-size: 14px; }
 /* портрет на телефоне — и на титуле тоже */
 @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; flex-direction: column; } }
 #rotate small { margin-top: 12px; font-size: 12px; opacity: 0.6; }
+#pause { background: linear-gradient(90deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.7) 40%, rgba(0,0,0,0.25) 100%); justify-content: flex-start; }
