@@ -80,6 +80,8 @@ export class World {
     this._setupDoors();
     // дверца холодильника стоит у стены: открываем не дальше ~75°, иначе уходит в стену
     if (this.doors.Fridge_Door) this.doors.Fridge_Door.max = 1.3;
+    // межкомнатные двери — чуть выше, чтобы полотно заходило под наличник без щели сверху
+    for (const k of ["Door_Bedroom", "Door_Mom", "Door_Bath", "Door_Closet", "Door_Kids", "Door_WC", "Door_Loggia"]) if (this.doors[k]) this.doors[k].node.scaling.y = 1.03;
     // кладовка узкая: дверь открывается в коридор, иначе изнутри её не закрыть
     if (this.doors.Door_Closet) { this.doors.Door_Closet.dir = 1; this.doors.Door_Closet.max = 1.45; }
     await this._loadInterior(base);
@@ -96,12 +98,13 @@ export class World {
   }
 
   // Модель в коробку: длинная сторона/высота/толщина под заданные размеры, низ на ноль.
-  _fit(C, tag, { w, h, d, len } = {}) {
+  _fit(C, tag, { w, h, d, len, drop } = {}) {
     const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false);
     const holder = new TransformNode(tag, this.scene), inner = new TransformNode(tag + "_fit", this.scene);
     for (const rn of inst.rootNodes) rn.parent = inner;
     inner.parent = holder;
-    const vis = () => inner.getChildMeshes(false).filter((m) => m.getTotalVertices() > 0);
+    if (drop) for (const m of inner.getChildMeshes(false)) if (drop.test(m.name)) m.setEnabled(false);   // лишнее из сцены автора
+    const vis = () => inner.getChildMeshes(false).filter((m) => m.isEnabled() && m.getTotalVertices() > 0);
     const bounds = () => {
       holder.computeWorldMatrix(true); inner.computeWorldMatrix(true);
       let mn = new Vector3(1e9, 1e9, 1e9), mx = new Vector3(-1e9, -1e9, -1e9);
@@ -123,15 +126,22 @@ export class World {
   // квартира: настоящие двери, ванна, унитаз, чугунные батареи (Sketchfab)
   async _loadInterior(base) {
     const load = async (f) => { try { const C = await LoadAssetContainerAsync(base + f + ".glb", this.scene); for (const m of C.materials) m.maxSimultaneousLights = this.lampK + 3; return C; } catch (e) { console.warn("нет модели", f, e); return null; } };
-    const [door, tub, wc, rad] = await Promise.all(["door", "bathtub", "toilet", "radiator"].map(load));
+    const door = null;
+    const [tub, wc, rad] = await Promise.all(["bathtub", "toilet", "radiator"].map(load));
+    // дверь: полотно непрозрачное (в модели оно ошибочно полупрозрачное — отсюда «дыры»), стекло остаётся стеклом
+    if (door) for (const m of door.meshes) {
+      if (!m.material || m.getTotalVertices() === 0) continue;
+      if (m.getTotalVertices() > 100) { m.material.transparencyMode = 0; m.material.alpha = 1; m.material.backFaceCulling = false; if (m.material.albedoTexture) m.material.albedoTexture.hasAlpha = false; }
+      else if (m.getTotalVertices() > 10) { m.material.alpha = 0.35; }
+    }
     const all = [];
     // двери: новое полотно садится на петлю старого, старое невидимо, но держит столкновения
-    if (door) for (const name of ["Door_Bedroom", "Door_Mom", "Door_Bath", "Door_Closet", "Door_Kids", "Door_WC", "Door_Loggia"]) {
+    if (door && false) for (const name of ["Door_Bedroom", "Door_Mom", "Door_Bath", "Door_Closet", "Door_Kids", "Door_WC", "Door_Loggia"]) {
       const D = this.doors[name]; if (!D) continue;
       const ex = (D.node.metadata && D.node.metadata.gltf && D.node.metadata.gltf.extras) || {};
       const w = ex.width || 0.8;
       const old = this.meshesOf(name);
-      const hold = this._fit(door, "rd_" + name, { w, h: 1.995, d: 0.045 });
+      const hold = this._fit(door, "rd_" + name, { w, h: 1.995, d: 0.045, drop: /Object_0$/ });
       hold.parent = D.node;
       hold.position.set(w / 2, 0.005, 0);
       for (const m of old) m.isVisible = false;
@@ -426,7 +436,7 @@ export class World {
     const avoid = [[-6, -18, 3], [5, -19.5, 3], [0.5, -21.5, 2.5], [-2.6, -16.4, 2.2], [-7.5, -12.2, 2], [0.5, -13, 1.5], [-12, -16, 1.5]];
     const onPath = (x, y) => (y > -12.2 && y < -5.8) || x < -19.5 || avoid.some(([ax, ay, ar]) => Math.hypot(x - ax, y - ay) < ar);
     let n = 0;
-    for (let i = 0; i < 400 && n < 34; i++) {
+    for (let i = 0; i < 400 && n < (this.mobile ? 12 : 22); i++) {
       const x = -19 + r() * 28, y = -26 + r() * 54;
       if (onPath(x, y) || (x > -6 && x < 6.5 && y > -6 && y < 17.5) || (x > -11.5 && x < -10.5)) continue;   // не в нашем доме и не на дороге
       if (x > -20.5 && x < -10.8 && y > -7) continue;                                                       // западная дорога
@@ -505,7 +515,7 @@ export class World {
       }
       holder.position.copyFrom(B(o.x, o.y, -6.3));
       holder.rotation.y = yaw;
-      for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.freezeWorldMatrix(); }
+      for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.freezeWorldMatrix(); m.doNotSyncBoundingInfo = true; }
       if (o.hide && this.nodes[o.hide]) this.nodes[o.hide].setEnabled(false);
       // коллайдер: ствол — цилиндр, реквизит — коробка по габаритам
       if (o.col !== false) {
@@ -562,7 +572,7 @@ export class World {
       [B(5.6, -4, -6), B(20, 16, 8)],        // восток (кухня, детская, лоджия)
     ];
     this.snow = zones.map(([a, b]) => {
-      const ps = new ParticleSystem("snow", this.mobile ? 300 : 1800, scene);
+      const ps = new ParticleSystem("snow", this.mobile ? 250 : 900, scene);
       ps.particleTexture = tex;
       ps.emitter = new Vector3(0, 0, 0);
       ps.minEmitBox = new Vector3(Math.min(a.x, b.x), Math.max(a.y, b.y), Math.min(a.z, b.z));
@@ -673,7 +683,7 @@ export class World {
     if (lamps !== undefined) this.outside.lamps = lamps;
     if (storm !== undefined) {
       this.outside.storm = storm;
-      for (const ps of this.snow) { ps.emitRate = (this.mobile ? 120 : 420) * storm; ps.minEmitPower = 1 + storm * 1.5; ps.maxEmitPower = 2 + storm * 3; }
+      for (const ps of this.snow) { ps.emitRate = (this.mobile ? 90 : 260) * storm; ps.minEmitPower = 1 + storm * 1.5; ps.maxEmitPower = 2 + storm * 3; }
     }
   }
 

@@ -1,0 +1,9 @@
+{
+  "name": "Квартира 14",
+  "short_name": "Квартира 14",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}

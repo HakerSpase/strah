@@ -17,6 +17,13 @@ if (new URLSearchParams(location.search).has("bg")) window.requestAnimationFrame
 const canvas = $("game");
 const isTouch = matchMedia("(pointer: coarse)").matches && navigator.maxTouchPoints > 0;
 if (isTouch) document.body.classList.add("touch");
+// телефон: с первого же касания — полный экран и горизонталь (браузер разрешает это только по жесту)
+async function goLandscape() {
+  if (!isTouch) return;
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: "hide" }); } catch (e) {}
+  try { await screen.orientation.lock("landscape"); } catch (e) {}
+}
+if (isTouch) document.addEventListener("pointerdown", goLandscape, { capture: true });
 
 // ---------------- настройки (сохраняются в браузере) ----------------
 const engine = new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "high-performance" }, false);
@@ -93,7 +100,7 @@ function applyQuality(q) {
   world.mirrorsAllowed = q !== "low";
   player.light.shadowEnabled = q !== "low";
   player.shadows.getShadowMap().refreshRate = q === "high" ? 1 : 2;
-  for (const ps of world.snow || []) ps.emitRate = (q === "low" ? 160 : 420) * world.outside.storm;
+  for (const ps of world.snow || []) ps.emitRate = (q === "low" ? 110 : 260) * world.outside.storm;
 }
 
 function applySettings() {
@@ -151,6 +158,14 @@ function syncSettings() {
 }
 buildSettings($("settings"));
 buildSettings($("pause-settings"));
+// меню: настройки и управление раскрываются по нажатию, одно за раз
+for (const [btn, panel] of [["settings-btn", "settings-panel"], ["help-btn", "help-panel"]]) {
+  $(btn).addEventListener("click", () => {
+    const open = $(panel).classList.contains("hidden");
+    for (const [b, p] of [["settings-btn", "settings-panel"], ["help-btn", "help-panel"]]) { $(p).classList.add("hidden"); $(b).classList.remove("open"); }
+    if (open) { $(panel).classList.remove("hidden"); $(btn).classList.add("open"); }
+  });
+}
 $("reload-link").addEventListener("click", (e) => { e.preventDefault(); location.reload(); });
 
 // ---------------- загрузка ----------------
@@ -190,7 +205,8 @@ async function boot() {
     $("continue").classList.remove("hidden");
     $("start").textContent = "Новая игра";
   }
-  $("settings").classList.remove("hidden");
+  $("title").classList.remove("loading");
+  for (const id of ["settings-btn", "help-btn"]) $(id).classList.remove("hidden");
   engine.runRenderLoop(() => frame());
   if (TRAILER) import("./trailer.js").then((m) => m.runTrailer({ ...window.game, engine, frame, startGame, setPlaying: (v) => (playing = v) }));
 }
@@ -288,6 +304,10 @@ function lockPointer() {
 window.addEventListener("keydown", (e) => {
   if (!playing) return;
   if (e.code === "KeyE") interact();
+  // Esc: если мышь не захвачена, браузер сам паузу не вызовет — открываем/закрываем меню вручную
+  if (e.code === "Escape" && !isTouch && document.pointerLockElement !== canvas) {
+    if (clock.paused) { setPaused(false); lockPointer(); } else setPaused(true);
+  }
 });
 canvas.addEventListener("mousedown", () => {
   if (!playing || isTouch) return;
@@ -364,15 +384,13 @@ $("start").addEventListener("click", () => {
 $("continue").addEventListener("click", () => { const s = loadSave(); startGame(s ? s.chapter : 0); });
 
 async function startGame(chapter, quick = false) {
+  // захват мыши и полный экран — сразу, пока действует клик игрока (после await браузер уже не разрешит)
+  if (isTouch) goLandscape(); else lockPointer();
   audio.start({ master: settings.master, ambience: settings.ambience, effects: settings.effects });
   audio.ambience();
   await audio.loadVoices();
   ui.onSay = (text) => audio.speak(text);
   applySettings();
-  if (isTouch) {
-    try { await document.documentElement.requestFullscreen(); } catch (e) {}
-    try { await screen.orientation.lock("landscape"); } catch (e) {}
-  } else lockPointer();
   ui.show("title", false);
   ui.show("intro", true);
   document.body.classList.add("playing");

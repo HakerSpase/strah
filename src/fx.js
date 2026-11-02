@@ -51,7 +51,7 @@ export function setupFX(scene, world, player, low) {
   const dot = dotTex(scene);
 
   // ---------- пыль: видна только в луче ----------
-  const dust = new ParticleSystem("dust", low ? 120 : 380, scene);
+  const dust = new ParticleSystem("dust", low ? 80 : 200, scene);
   dust.particleTexture = dot;
   dust.emitter = player.camera.position;
   dust.minEmitBox = new Vector3(-2.5, -1.4, -2.5); dust.maxEmitBox = new Vector3(2.5, 1.2, 2.5);
@@ -123,7 +123,7 @@ export function setupFX(scene, world, player, low) {
 
   // ---------- улица: метель вокруг игрока и позёмка у земли ----------
   const flake = dot;
-  const near = new ParticleSystem("nearSnow", low ? 500 : 2200, scene);
+  const near = new ParticleSystem("nearSnow", low ? 400 : 1200, scene);
   near.particleTexture = flake; near.emitter = new Vector3();
   near.minEmitBox = new Vector3(-14, 2, -14); near.maxEmitBox = new Vector3(14, 9, 14);
   near.direction1 = new Vector3(4.5, -2.5, -1.2); near.direction2 = new Vector3(8, -3.5, 1.2);
@@ -133,7 +133,7 @@ export function setupFX(scene, world, player, low) {
   near.emitRate = low ? 220 : 900;
   near.color1 = new Color4(1, 1, 1, 0.9); near.color2 = new Color4(0.8, 0.85, 0.95, 0.7); near.colorDead = new Color4(1, 1, 1, 0);
   near.blendMode = ParticleSystem.BLENDMODE_STANDARD;
-  const drift = new ParticleSystem("drift", low ? 150 : 600, scene);
+  const drift = new ParticleSystem("drift", low ? 100 : 300, scene);
   drift.particleTexture = flake; drift.emitter = new Vector3();
   drift.minEmitBox = new Vector3(-16, 0.02, -12); drift.maxEmitBox = new Vector3(-6, 0.5, 12);
   drift.direction1 = new Vector3(6, 0.1, -1); drift.direction2 = new Vector3(10, 0.5, 1);
@@ -163,7 +163,7 @@ export function setupFX(scene, world, player, low) {
     if (out) {
       const pp = player.position, storm = world.outside ? world.outside.storm : 1;
       near.emitter.copyFrom(pp); drift.emitter.copyFrom(pp);
-      near.emitRate = (fx.q === "low" ? 220 : 900) * Math.min(1.4, storm * 0.6);
+      near.emitRate = (fx.q === "low" ? 180 : 500) * Math.min(1.4, storm * 0.6);
     }
     // вода
     bump.vOffset = (bump.vOffset + dt * 2.6) % 1;

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#000000" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="/manifest.webmanifest" />
   <title>Квартира 14</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Neucha&family=PT+Serif:ital@0;1&display=swap" rel="stylesheet" />
@@ -41,17 +42,23 @@
     <div class="hint"><span class="desktop-only">[E] / клик — </span><span class="touch-only">нажми — </span>закрыть</div>
   </div>
 
-  <div id="title" class="screen">
-    <div class="title-inner">
-      <h1>КВАРТИРА 14</h1>
-      <p class="sub">психологический хоррор</p>
+  <div id="title" class="screen loading">
+    <div class="title-inner menu-screen">
+      <h1>КВАРТИРА <span class="num">14</span></h1>
       <div id="loading"><div id="loading-bar"></div></div>
       <p id="loading-text">загрузка квартиры…</p>
-      <button id="continue" class="hidden">Продолжить</button>
-      <button id="start" class="hidden">Войти</button>
-      <div class="settings hidden" id="settings"></div>
-      <p class="tip desktop-only">Играй в наушниках и в темноте.<br />WASD — идти · Shift — бежать · E — взаимодействовать · F — фонарик · C — присесть · Esc — меню</p>
-      <p class="tip touch-only">Играй в наушниках. Левая половина экрана — идти, правая — смотреть.</p>
+      <nav class="menu">
+        <button id="continue" class="hidden">Продолжить</button>
+        <button id="start" class="hidden">Войти</button>
+        <button id="settings-btn" class="hidden">Настройки</button>
+        <button id="help-btn" class="hidden">Управление</button>
+      </nav>
+      <div class="panel hidden" id="settings-panel"><div class="settings" id="settings"></div></div>
+      <div class="panel hidden" id="help-panel">
+        <p class="tip desktop-only">WASD — идти · Shift — бежать<br />E — взаимодействовать · F — фонарик<br />C — присесть · Esc — меню</p>
+        <p class="tip touch-only">Левая половина экрана — идти, правая — смотреть.<br />Кнопки справа — действие, фонарик, бег, присесть.</p>
+        <p class="tip">Играй в наушниках и в темноте.</p>
+      </div>
       <p class="credits">разработчик — <a href="https://t.me/w_dtc" target="_blank" rel="noopener">@w_dtc</a></p>
     </div>
   </div>
@@ -91,7 +98,7 @@
     </div>
   </div>
   <div id="fps" class="hidden"></div>
-  <div id="rotate" class="screen">Поверни телефон горизонтально</div>
+  <div id="rotate" class="screen">Поверни телефон горизонтально<br /><small>или коснись экрана</small></div>
 
   <script type="module" src="/src/main.js"></script>
 </body>
