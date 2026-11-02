@@ -24,6 +24,7 @@ export const ui = {
   say(text, { voice = false, sec = 4 } = {}) {
     const s = $("subtitle");
     if (this.onSay) this.onSay(text, voice);
+    this.busyUntil = performance.now() + sec * 1000;
     s.textContent = text;
     s.className = voice ? "voice" : "";
     s.style.opacity = 1;

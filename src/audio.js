@@ -744,7 +744,7 @@ export class Audio {
     } else if (v.v === "child") {
       // детский голос из ниоткуда: тоньше, с эхом квартиры, будто через стену
       const out = this._out(null, { wet: 0.75, life: dur * 1.2 + 3, bus: "fx" }); out.gain.value = 1.0;
-      const s = this._src(buf, false, 1.06);
+      const s = this._src(buf, false, 1.0);
       s.connect(this._filter("highpass", 260)).connect(this._filter("peaking", 2600, 1)).connect(out); s.start(t);
     } else {
       // «мама»: ниже, раздвоено (второй голос чуть отстаёт и ещё ниже), шёпот под ним

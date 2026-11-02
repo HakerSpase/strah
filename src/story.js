@@ -25,6 +25,20 @@ const ROOMS = {
   wc: [-2, -0.8, 8.8, 10.2], loggia: [4, 5.3, 7.4, 11.6], stair: [-1.6, 1.6, 13.45, 16.6],
 };
 
+// мысли героя при первом входе в комнату (один раз за игру)
+const ROOM_LINES = {
+  bed: "Моя старая комната. Мама так и не переклеила обои. Вон пятно — я пролил чернила в третьем классе.",
+  kitchen: "Кухня пахнет так же. Корвалол, жареный лук… и что-то кислое. Будто мясо испортилось.",
+  bath: "Здесь мама купала Аню. Вода всегда шла ледяная, и Аня визжала на весь подъезд.",
+  mom: "Мамина комната. Иконы… повёрнуты лицом к стене. Зачем?",
+  kids: "Анины рисунки. Она рисовала его каждый день. А я смеялся.",
+  closet: "Тут Аня пряталась, когда боялась. Я всегда знал, где её искать. А в ту ночь — не стал.",
+  wc: "Бачок течёт. Тридцать лет течёт, и никто не починил.",
+  loggia: "Мороз. Двор такой же, как в детстве. Только качели скрипят громче.",
+  vest: "Тамбур. За стеной соседи… Ни звука. Будто во всём доме никого.",
+  stair: "Подъезд. Лампочку на третьем так никто и не вкрутил.",
+};
+
 export class Story {
   constructor({ world, player, entity, audio }) {
     this.world = world; this.player = player; this.entity = entity; this.audio = audio;
@@ -296,6 +310,19 @@ export class Story {
       ui.say("Подсказка: " + this._goal.hint, { sec: 6 });
     }
     if (this.onFrame) this.onFrame(dt);
+    // мысли вслух: в новой комнате, если сейчас никто не говорит
+    this._roomT = (this._roomT || 0) - dt;
+    if (this._roomT <= 0 && !this.dead && !ui.noteOpen) {
+      this._roomT = 0.5;
+      this.roomSeen = this.roomSeen || {};
+      for (const r in ROOM_LINES) {
+        if (this.roomSeen[r] || !this.inRoom(r)) continue;
+        if (performance.now() < (ui.busyUntil || 0)) break;
+        this.roomSeen[r] = true;
+        ui.say(ROOM_LINES[r], { sec: 5 });
+        break;
+      }
+    }
   }
 
   // =====================================================================

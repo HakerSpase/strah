@@ -1,6 +1,6 @@
 import {
   Axis, Color3, Color4, DynamicTexture, HemisphericLight, LoadAssetContainerAsync, Material, MirrorTexture,
-  MeshBuilder, ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, Vector3,
+  MeshBuilder, ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, TransformNode, Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import { B, clamp, rnd } from "./util.js";
@@ -291,8 +291,9 @@ export class World {
     c.addAllToScene();
     const meshes = (this.extMeshes = c.meshes.filter((m) => m.name !== "__root__"));
     for (const n of [...c.transformNodes, ...c.meshes]) this.nodes[n.name] = n;
+    const houseMats = await this._loadHouses(base, meshes);
     this.facadeMats = [];
-    this.extMats = c.materials;
+    this.extMats = c.materials.concat(houseMats);
     for (const m of c.materials) {
       m.fogEnabled = false;
       m.backFaceCulling = true;          // стены нашего дома не видны изнутри квартиры
@@ -339,6 +340,95 @@ export class World {
     this.outside = { windows: 1, lamps: 1, storm: 1 };
     this._horizon(c.materials);
     this._blizzard();
+  }
+
+  // Готовые модели двора (Sketchfab, CC BY): панельки, школа, ели, деревья, площадка — вместо самодельных коробок.
+  // Каждая подгоняется по длине (len) или высоте (h), ставится на землю, получает невидимый коллайдер.
+  async _loadHouses(base, meshes) {
+    const PI = Math.PI;
+    const P = [
+      { f: "house_a", x: 0, y: -36.5, len: 60, yaw: PI, hide: "Ext_House_S", col: false },
+      { f: "house_b", x: -48, y: 5, len: 60, yaw: PI / 2, hide: "Ext_House_W", col: false },
+      { f: "house_a", x: 40, y: 10, len: 60, yaw: -PI / 2, hide: "Ext_House_E", col: false },
+      // просветы между домами — ещё дома и школа: края карты не видно
+      { f: "school", x: 0, y: 46, len: 42, yaw: 0, col: false },
+      { f: "house_b", x: -30, y: 47, len: 34, yaw: 0, col: false },
+      { f: "house_b", x: 28, y: 50, len: 34, yaw: 0, col: false },
+      { f: "house_b", x: 41, y: -34, len: 24, yaw: -PI / 2, col: false },
+      { f: "house_b", x: -40, y: -36, len: 22, yaw: PI / 2, col: false },
+      // детская площадка
+      { f: "swings", x: -6, y: -18, h: 2.6, yaw: 0 },
+      { f: "slide", x: 5, y: -19.5, h: 2.6, yaw: PI / 2 },
+      { f: "seesaw", x: -2.6, y: -16.4, h: 0.9, yaw: 0.3 },
+      { f: "bench", x: -9.6, y: -20.5, h: 0.85, yaw: PI / 2 },
+      { f: "bench", x: -3.2, y: -24.6, h: 0.85, yaw: 0 },
+      { f: "bench", x: 2.8, y: -13.4, h: 0.85, yaw: PI },
+    ];
+    // ели и голые деревья: по краям двора и между дорожками, не на тропе игрока
+    let seed = 11; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const firs = [[-16, -24], [8.5, -25], [-18.5, 12], [-18.5, 24], [16.5, 22], [20, 8], [-9.5, 22], [9, 26], [-17, -14], [12.5, -24], [-9, 4], [8.5, 2], [22, -12], [-24, 14]];
+    for (const [x, y] of firs) P.push({ f: "firs", keep: r() < 0.5 ? /SnowTree1/ : /SnowTree2/, x, y, h: 6 + r() * 4, yaw: r() * 6.28, colR: 0.35 });
+    const avoid = [[-6, -18, 3], [5, -19.5, 3], [0.5, -21.5, 2.5], [-2.6, -16.4, 2.2], [-7.5, -12.2, 2], [0.5, -13, 1.5], [-12, -16, 1.5]];
+    const onPath = (x, y) => (y > -12.2 && y < -5.8) || x < -19.5 || avoid.some(([ax, ay, ar]) => Math.hypot(x - ax, y - ay) < ar);
+    let n = 0;
+    for (let i = 0; i < 400 && n < 34; i++) {
+      const x = -19 + r() * 28, y = -26 + r() * 54;
+      if (onPath(x, y) || (x > -6 && x < 6.5 && y > -6 && y < 17.5) || (x > -11.5 && x < -10.5)) continue;   // не в нашем доме и не на дороге
+      if (x > -20.5 && x < -10.8 && y > -7) continue;                                                       // западная дорога
+      P.push({ f: r() < 0.6 ? "tree_dead" : "tree_winter", x, y, h: 5 + r() * 4, yaw: r() * 6.28, colR: 0.3 });
+      n++;
+    }
+    for (const o of ["Ext_Trees", "Ext_Playground", "Ext_Swing"]) if (this.nodes[o]) this.nodes[o].setEnabled(false);
+    // трансформаторная будка была частью старой площадки — ставим её заново простым бетонным блоком
+    const concrete = this.scene.materials.find((m) => m.name === "Concrete");
+    const tb = MeshBuilder.CreateBox("transformer", { width: 3, height: 2.8, depth: 3 }, this.scene);
+    tb.position.copyFrom(B(16.5, -4.5, -6.3 + 1.4)); tb.material = concrete; meshes.push(tb);
+
+    const mats = [], cache = {};
+    for (const o of P) {
+      let C = cache[o.f];
+      if (C === undefined) {
+        try { C = cache[o.f] = await LoadAssetContainerAsync(base + o.f + ".glb", this.scene); } catch (e) { console.warn("модель не загрузилась", o.f, e); cache[o.f] = null; continue; }
+        for (const m of C.materials) { mats.push(m); m.maxSimultaneousLights = this.mobile ? 6 : 8; }
+      }
+      if (!C) continue;
+      const tag = (o.hide || o.f) + "_" + Math.round(o.x) + "_" + Math.round(o.y);
+      const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false);
+      const holder = new TransformNode(tag, this.scene), inner = new TransformNode(tag + "_fit", this.scene);
+      for (const rn of inst.rootNodes) rn.parent = inner;
+      inner.parent = holder;
+      // из пака оставляем только нужное дерево; землю и кусты пака — прочь
+      for (const m of inner.getChildMeshes(false)) {
+        if (/Plane|Bush/i.test(m.name) || (o.keep && !o.keep.test(m.name))) m.setEnabled(false);
+      }
+      const vis = () => inner.getChildMeshes(false).filter((m) => m.isEnabled() && m.getTotalVertices() > 0);
+      const bounds = () => {
+        holder.computeWorldMatrix(true); inner.computeWorldMatrix(true);
+        let mn = new Vector3(1e9, 1e9, 1e9), mx = new Vector3(-1e9, -1e9, -1e9);
+        for (const m of vis()) { m.computeWorldMatrix(true); const b = m.getBoundingInfo().boundingBox; mn = Vector3.Minimize(mn, b.minimumWorld); mx = Vector3.Maximize(mx, b.maximumWorld); }
+        return { min: mn, max: mx };
+      };
+      let bb = bounds();
+      const sx = bb.max.x - bb.min.x, sz = bb.max.z - bb.min.z, sy = bb.max.y - bb.min.y;
+      if (o.len && sz > sx) inner.rotation.y = PI / 2;
+      inner.scaling.setAll(o.len ? o.len / Math.max(sx, sz) : o.h / Math.max(0.01, sy));
+      bb = bounds();
+      inner.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+      holder.position.copyFrom(B(o.x, o.y, -6.3));
+      holder.rotation.y = o.yaw || 0;
+      for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.freezeWorldMatrix(); }
+      if (o.hide && this.nodes[o.hide]) this.nodes[o.hide].setEnabled(false);
+      // коллайдер: ствол — цилиндр, реквизит — коробка по габаритам
+      if (o.col !== false) {
+        bb = bounds();
+        const c = o.colR
+          ? MeshBuilder.CreateCylinder(tag + "_col", { diameter: o.colR * 2, height: 3 }, this.scene)
+          : MeshBuilder.CreateBox(tag + "_col", { width: bb.max.x - bb.min.x, height: Math.min(2.5, bb.max.y - bb.min.y), depth: bb.max.z - bb.min.z }, this.scene);
+        c.position.set(o.colR ? holder.position.x : (bb.min.x + bb.max.x) / 2, -6.3 + 1.25, o.colR ? holder.position.z : (bb.min.z + bb.max.z) / 2);
+        c.isVisible = false; c.isPickable = false; c.checkCollisions = true;
+      }
+    }
+    return mats;
   }
 
   // земля до горизонта и кольцо далёких панелек — чтобы из окна не был виден край карты
