@@ -346,10 +346,8 @@ export class Story {
     a.click(null, 0.4);
     await wait(0.8, tk);
     this.tv = a.tvStatic(null);
-    a.whisper(null, 2.0, 0.35);
     await wait(1.4, tk);
     ui.say("«…Андрюша?.. Почему ты меня не ищешь? Мне тут темно…»", { voice: true, sec: 5 });
-    a.whisper(null, 2.6, 0.4);
     await wait(4.2, tk);
     this.tv.stop(); this.tv = null;
     a.dialTone();
@@ -421,7 +419,6 @@ export class Story {
     a.click(this.at("I_Radio"), 0.5);
     await wait(1.6, tk);
     const back = p.position.subtract(p.forward().multiplyByFloats(1, 0, 1).normalize().scale(0.6)).add(new Vector3(0, 1.6, 0));
-    a.whisper(this.xyz(back), 2.4, 0.8);
     ui.say("«…ключик там, где тепло… найди меня…»", { voice: true, sec: 4 });
     this.fearTarget = 0.35; this.fear += 0.2;
     await wait(4, tk);
@@ -550,7 +547,6 @@ export class Story {
     await wait(1.0, tk);
     e.place(B(-0.95, 7.6, 0), -Math.PI / 2, "Peek");
     e.faceTo(p.position);
-    a.whisper(e.headXYZ(), 2.2, 0.6);
     ui.say("«…мама…»", { voice: true, sec: 2.5 });
     const t1 = clock.t;
     await until(() => e.seen(0.55) || clock.t - t1 > 6, tk);
@@ -641,7 +637,6 @@ export class Story {
     e.place(B(0, 0.4, 0), 0, "Peek");
     e.faceTo(p.position);
     a.jointCrack(e.headXYZ(), 6);
-    a.whisper(e.headXYZ(), 1.6, 0.5);
     ui.say("«Андрюша. Иди к маме».", { voice: true, sec: 3 });
     this.fearTarget = 0.8;
     await wait(this.diff(3.2, 2.2, 1.4), tk);
@@ -659,7 +654,6 @@ export class Story {
         doorT += dt;
         if (!this.flags.callOut && doorT > 2.5) {
           this.flags.callOut = true;
-          a.whisper(this.at("Door_Closet", 0.5), 2.5, 0.7);
           ui.say(this.diff("«Анечка. Открой маме». Не открывай. Жди.", "«Анечка. Открой маме».", "«Открой».") , { voice: true, sec: 4 });
         }
       }
@@ -702,7 +696,6 @@ export class Story {
     w.setDoor("Door_Front", true, { silent: true, speed: 50 });
     this.off("Door_Front"); this.off("Door_Outer");
     await wait(1.8, tk);
-    a.whisper(this.xyz(p.position.add(new Vector3(0, 1.6, 2.0))), 2.4, 0.9);
     ui.say("«Андрюша… обернись. Это я. Это мама».", { voice: true, sec: 4 });
     this.goal("Беги. Не оборачивайся. Вниз по лестнице — к машине");
     await wait(2.4, tk);
@@ -764,7 +757,6 @@ export class Story {
         await wait(0.8);
         this.tv = a.tvStatic(null);
         ui.say("«…Андрюша. Не уезжай без меня. Я же тут, в машине. Я тебя жду».", { voice: true, sec: 5 });
-        a.whisper(null, 3, 0.45);
         await wait(4.5);
         if (this.tv) { this.tv.stop(); this.tv = null; }
         a.dialTone();

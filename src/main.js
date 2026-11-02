@@ -155,6 +155,8 @@ $("reload-link").addEventListener("click", (e) => { e.preventDefault(); location
 
 // ---------------- загрузка ----------------
 async function boot() {
+  // шрифты записок и подсказок — заранее, чтобы записка не мигала при первом открытии
+  try { await Promise.race([Promise.all(['20px "Neucha"', 'italic 13px "PT Serif"', '16px "PT Serif"'].map((f) => document.fonts.load(f, "Аа"))), new Promise((r) => setTimeout(r, 3000))]); } catch (e) {}
   const base = lightModels ? "/models/mobile/" : "/models/";
   await world.load((f) => { $("loading-bar").style.width = `${Math.round(f * 80)}%`; }, base, lightModels);
   $("loading-text").textContent = "она ждёт…";

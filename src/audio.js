@@ -754,7 +754,6 @@ export class Audio {
       const lp = this._filter("lowpass", 3800, 0.7);
       a.connect(lp); b.connect(gb).connect(lp); lp.connect(out);
       a.start(t); b.start(t + 0.045);
-      this.whisper(null, dur * 1.1, 0.25);
     }
     // музыка и гул притихают под голосом
     if (this.musicGain) { this.amb.gain.setTargetAtTime(this.vol.ambience * 0.55, t, 0.2); this.amb.gain.setTargetAtTime(this.vol.ambience, t + dur + 0.3, 0.8); }

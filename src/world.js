@@ -378,7 +378,19 @@ export class World {
       P.push({ f: r() < 0.6 ? "tree_dead" : "tree_winter", x, y, h: 5 + r() * 4, yaw: r() * 6.28, colR: 0.3 });
       n++;
     }
-    for (const o of ["Ext_Trees", "Ext_Playground", "Ext_Swing"]) if (this.nodes[o]) this.nodes[o].setEnabled(false);
+    for (const [x, y, rz] of [[0.5, -13, 0], [-13.5, 3, 90], [13, 9, -90], [-13.5, -16, 90], [12, -18, 180], [-13.5, 22, 90]]) {
+      const a = (rz * PI) / 180;
+      P.push({ f: "lamp", x, y, h: 7.4, arm: [1.5 * Math.sin(a), -1.5 * Math.cos(a)], colR: 0.15 });
+    }
+    for (const o of ["Ext_Trees", "Ext_Playground", "Ext_Swing", "Ext_Lamps"]) if (this.nodes[o]) this.nodes[o].setEnabled(false);
+    // светящиеся натриевые плафоны остаются: маленький диск под каждым огнём
+    const sod = this.scene.materials.find((m) => m.name === "Sodium");
+    for (let i = 0; i < 6; i++) {
+      if (!this.nodes["SL_" + i]) continue;
+      const d = MeshBuilder.CreateDisc("sodium" + i, { radius: 0.2, tessellation: 16 }, this.scene);
+      d.rotation.x = PI / 2; d.position.copyFrom(this.pos("SL_" + i)).addInPlaceFromFloats(0, 0.1, 0);
+      d.material = sod; d.isPickable = false; meshes.push(d);
+    }
     // трансформаторная будка была частью старой площадки — ставим её заново простым бетонным блоком
     const concrete = this.scene.materials.find((m) => m.name === "Concrete");
     const tb = MeshBuilder.CreateBox("transformer", { width: 3, height: 2.8, depth: 3 }, this.scene);
@@ -414,8 +426,30 @@ export class World {
       inner.scaling.setAll(o.len ? o.len / Math.max(sx, sz) : o.h / Math.max(0.01, sy));
       bb = bounds();
       inner.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+      let yaw = o.yaw || 0;
+      if (o.arm) {
+        // столб — в точку, кронштейн — в нужную сторону: центры нижних и верхних вершин
+        inner.computeWorldMatrix(true);
+        const lo = new Vector3(), hi = new Vector3(); let nl = 0, nh = 0;
+        const H = bb.max.y - bb.min.y, base = bb.min.y;
+        for (const m of vis()) {
+          m.computeWorldMatrix(true);
+          const pos = m.getVerticesData("position"), W = m.getWorldMatrix();
+          for (let i = 0; i < pos.length; i += 3) {
+            const v = Vector3.TransformCoordinates(new Vector3(pos[i], pos[i + 1], pos[i + 2]), W);
+            if (v.y < base + H * 0.15) { lo.addInPlace(v); nl++; } else if (v.y > base + H * 0.85) { hi.addInPlace(v); nh++; }
+          }
+        }
+        if (nl && nh) {
+          lo.scaleInPlace(1 / nl); hi.scaleInPlace(1 / nh);
+          inner.position.x -= lo.x; inner.position.z -= lo.z;
+          const have = Math.atan2(hi.x - lo.x, hi.z - lo.z);
+          const want = Math.atan2(o.arm[0], -o.arm[1]);      // Blender (x, y) → Babylon (x, -y)
+          yaw = want - have;
+        }
+      }
       holder.position.copyFrom(B(o.x, o.y, -6.3));
-      holder.rotation.y = o.yaw || 0;
+      holder.rotation.y = yaw;
       for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.freezeWorldMatrix(); }
       if (o.hide && this.nodes[o.hide]) this.nodes[o.hide].setEnabled(false);
       // коллайдер: ствол — цилиндр, реквизит — коробка по габаритам
