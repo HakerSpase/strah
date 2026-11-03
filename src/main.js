@@ -28,10 +28,13 @@ if (isTouch) document.addEventListener("pointerdown", goLandscape, { capture: tr
 // ---------------- настройки (сохраняются в браузере) ----------------
 const engine = new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "high-performance" }, false);
 const weakGpu = isTouch || /Radeon\(TM\) Graphics|Radeon Graphics|Intel|UHD|Iris|Mali|Adreno|PowerVR|Apple GPU/i.test(engine.getGlInfo().renderer);
-const DEFAULTS = { difficulty: "normal", fx: "strong", sens: 1, bright: 1, master: 0.85, ambience: 0.8, effects: 0.9, quality: weakGpu ? "low" : "medium" };
+const DEFAULTS = { difficulty: "normal", fx: "soft", sens: 1, bright: 1, master: 0.85, ambience: 0.8, effects: 0.9, quality: weakGpu ? "low" : "medium" };
 let settings = { ...DEFAULTS };
 try { Object.assign(settings, JSON.parse(localStorage.getItem("k14-settings") || "{}")); } catch (e) {}
+// v2: эффекты камеры по умолчанию мягкие — старое сохранённое «сильные» сбрасываем один раз
+if (settings.v !== 2) { settings.fx = "soft"; settings.v = 2; }
 const saveSettings = () => { try { localStorage.setItem("k14-settings", JSON.stringify(settings)); } catch (e) {} };
+saveSettings();
 const TRAILER = new URLSearchParams(location.search).has("trailer");
 if (TRAILER) Object.assign(settings, { quality: "high", fx: "strong", bright: 1.15 });
 const bootQuality = settings.quality;
@@ -240,7 +243,7 @@ function frame(fixedDt) {
   const f = playing ? story.fear : 0.1;
   if (audio.ctx) audio.setFear(f);
   if (settings.fx === "strong") {
-    // сильные эффекты (по умолчанию): плёнка, цветной прострел, тяжёлая виньетка
+    // сильные эффекты: плёнка, цветной прострел, тяжёлая виньетка
     pipe.grain.intensity = 9 + f * 26;
     if (pipe.chromaticAberrationEnabled) pipe.chromaticAberration.aberrationAmount = 5 + f * 40 + player.shake * 40;
     ip.vignetteWeight = 3 + f * 3.5;

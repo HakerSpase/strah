@@ -123,7 +123,7 @@ export function setupFX(scene, world, player, low) {
 
   // ---------- улица: метель вокруг игрока и позёмка у земли ----------
   const flake = dot;
-  const near = new ParticleSystem("nearSnow", low ? 400 : 1200, scene);
+  const near = new ParticleSystem("nearSnow", low ? 700 : 2000, scene);
   near.particleTexture = flake; near.emitter = new Vector3();
   near.minEmitBox = new Vector3(-14, 2, -14); near.maxEmitBox = new Vector3(14, 9, 14);
   near.direction1 = new Vector3(4.5, -2.5, -1.2); near.direction2 = new Vector3(8, -3.5, 1.2);
@@ -142,7 +142,6 @@ export function setupFX(scene, world, player, low) {
   drift.minSize = 0.008; drift.maxSize = 0.02;          // мелкая снежная пыль, которую ветер гонит по насту
   drift.emitRate = low ? 60 : 260;
   drift.color1 = new Color4(1, 1, 1, 0.35); drift.color2 = new Color4(0.85, 0.9, 1, 0.2); drift.colorDead = new Color4(1, 1, 1, 0);
-  const fogIn = { d: scene.fogDensity, c: scene.fogColor.clone() };
   let outside = null;
 
   fx.quality = (q) => {
@@ -155,15 +154,16 @@ export function setupFX(scene, world, player, low) {
     const out = player.position.y < -3;
     if (out !== outside) {
       outside = out;
-      for (const m of world.extMats || []) m.fogEnabled = out;
-      scene.fogDensity = out ? 0.026 : fogIn.d;
-      scene.fogColor = out ? new Color3(0.19, 0.17, 0.17) : fogIn.c;      // метель, подсвеченная натриевыми фонарями
+      // туман метели виден и из окон: двор тонет в мутном оранжевом зареве, дальние дома — силуэты
+      for (const m of world.extMats || []) if (m.name !== "skyNight") m.fogEnabled = true;
+      scene.fogDensity = out ? 0.03 : 0.016;
+      scene.fogColor = new Color3(0.2, 0.155, 0.13);
       if (out) { near.start(); drift.start(); } else { near.stop(); drift.stop(); }
     }
     if (out) {
       const pp = player.position, storm = world.outside ? world.outside.storm : 1;
       near.emitter.copyFrom(pp); drift.emitter.copyFrom(pp);
-      near.emitRate = (fx.q === "low" ? 180 : 500) * Math.min(1.4, storm * 0.6);
+      near.emitRate = (fx.q === "low" ? 300 : 850) * Math.min(1.4, storm * 0.6);
     }
     // вода
     bump.vOffset = (bump.vOffset + dt * 2.6) % 1;

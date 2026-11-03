@@ -1,8 +1,9 @@
 import {
-  Axis, Color3, Color4, DynamicTexture, HemisphericLight, LoadAssetContainerAsync, Material, MirrorTexture,
+  Axis, Color3, Color4, DynamicTexture, HemisphericLight, LoadAssetContainerAsync, Material, Matrix, MirrorTexture,
   Mesh, MeshBuilder, ParticleSystem, Plane, PointLight, Quaternion, StandardMaterial, TransformNode, Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
+import { setupAtmosphere } from "./atmos.js";
 import { B, clamp, rnd } from "./util.js";
 
 const LAMPS = {
@@ -53,6 +54,9 @@ export class World {
     });
     c.addAllToScene();
     for (const n of [...c.transformNodes, ...c.meshes]) this.nodes[n.name] = n;
+    // подъезд — к торцу башни
+    const ent = this.nodes.Ext_OwnEntrance;
+    if (ent) { ent.computeWorldMatrix(true); ent.setAbsolutePosition(ent.getAbsolutePosition().add(new Vector3(0, 0, 0.12))); }
 
     for (const m of c.materials) {
       m.maxSimultaneousLights = maxLights;
@@ -397,13 +401,15 @@ export class World {
     this.passLight.diffuse = new Color3(1, 0.9, 0.7); this.passLight.intensity = 0; this.passLight.range = 14;
     this.passLight.includedOnlyMeshes = meshes;
     const moon = (this.moon = new HemisphericLight("moon", new Vector3(0.3, 1, 0.2), scene));
-    moon.intensity = 0.25; moon.diffuse = new Color3(0.55, 0.6, 0.8); moon.groundColor = new Color3(0.12, 0.08, 0.07);
+    // ночь под снежными тучами: холодный рассеянный свет сверху, тёплый отсвет фонарей от снега снизу
+    moon.intensity = 0.55; moon.diffuse = new Color3(0.5, 0.56, 0.72); moon.groundColor = new Color3(0.26, 0.19, 0.15);
     moon.specular = Color3.Black();
     moon.includedOnlyMeshes = meshes;
     for (const P of this.proxies) P.light.excludedMeshes = meshes;
     this.ambient.excludedMeshes = meshes;
     this.outside = { windows: 1, lamps: 1, storm: 1 };
     this._horizon(c.materials);
+    setupAtmosphere(this, this.buildingMats || []);
     this._blizzard();
   }
 
@@ -414,12 +420,20 @@ export class World {
     const P = [
       // дома ставятся ближней стеной на линию вдоль края двора (near), толщина берётся из самой модели —
       // так они не залезают во двор и друг в друга. dir: куда от линии уходит дом (+1/-1 по оси axis)
-      { f: "house_a", axis: "y", near: -29.5, dir: -1, along: 0, len: 80, hy: 1.25, yaw: 0, hide: "Ext_House_S", col: false },
-      { f: "house_b", axis: "x", near: -44, dir: -1, along: 4, len: 78, hy: 1.4, yaw: PI / 2, hide: "Ext_House_W", col: false },
-      { f: "house_a", axis: "x", near: 41, dir: 1, along: 3, len: 80, hy: 1.25, yaw: -PI / 2, hide: "Ext_House_E", col: false },
-      { f: "school", axis: "y", near: 42, dir: 1, along: 0, len: 44, yaw: 0, col: false },
-      { f: "house_a", axis: "y", near: 44, dir: 1, along: -52, len: 46, hy: 2.0, yaw: 0, col: false },
-      { f: "house_a", axis: "y", near: 44, dir: 1, along: 50, len: 44, hy: 2.0, yaw: 0, col: false },
+      // наш дом — точечная девятиэтажка ровно вокруг квартиры (стены снаружи, изнутри их не видно)
+      // торцом во двор: торец ровный, вся квартира внутри стен (у длинных фасадов глубокие лоджии)
+      { f: "tower", box: [-6.8, 7.7, -4.75, 17.5], h: 30, hide: "Ext_House_Own" },
+      // замкнутый двор: юг — пятиэтажки, запад — длинная девятиэтажка за гаражами, восток — пятиэтажки за дорогой
+      { f: "block5b", axis: "y", near: -33, dir: -1, along: -17.5, len: 32, yaw: 0, hide: "Ext_House_S" },
+      { f: "block5b", axis: "y", near: -33, dir: -1, along: 15.5, len: 32, yaw: 0 },
+      { f: "block5a", axis: "y", near: -33, dir: -1, along: 62, len: 55.5, yaw: PI },
+      { f: "block9", axis: "x", near: -34, dir: -1, along: 0, len: 76, yaw: PI / 2, hide: "Ext_House_W" },
+      { f: "block5b", axis: "x", near: 22, dir: 1, along: -14, len: 32, yaw: -PI / 2, hide: "Ext_House_E" },
+      { f: "block5b", axis: "x", near: 22, dir: 1, along: 22, len: 32, yaw: -PI / 2 },
+      // север: школа, по бокам девятиэтажки; между ними улица (x≈12), по ней ездит машина
+      { f: "school", axis: "y", near: 42, dir: 1, along: -13, len: 44, yaw: 0, col: false },
+      { f: "panel9", axis: "y", near: 42, dir: 1, along: -60, len: 44, yaw: 0, col: false },
+      { f: "panel9", axis: "y", near: 44, dir: 1, along: 40, len: 44, yaw: 0, col: false },
       // детская площадка
       { f: "swings", x: -6, y: -18, h: 2.6, yaw: 0 },
       { f: "slide", x: 5, y: -19.5, h: 2.6, yaw: PI / 2 },
@@ -430,14 +444,14 @@ export class World {
     ];
     // ели и голые деревья: по краям двора и между дорожками, не на тропе игрока
     let seed = 11; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    const firs = [[-16, -24], [8.5, -25], [-18.5, 12], [-18.5, 24], [16.5, 22], [20, 8], [-9.5, 22], [9, 26], [-17, -14], [12.5, -24], [-9, 4], [8.5, 2], [22, -12], [-24, 14]];
+    const firs = [[-16, -24], [8.5, -25], [-18.5, 12], [-18.5, 24], [16.5, 22], [20, 8], [-9.5, 22], [9, 26], [-17, -14], [12.5, -24], [-9, 4], [9.2, 2], [22, -12], [-24, 14]];
     for (const [x, y] of firs) P.push({ f: "firs", keep: r() < 0.5 ? /SnowTree1/ : /SnowTree2/, x, y, h: 6 + r() * 4, yaw: r() * 6.28, colR: 0.35 });
     const avoid = [[-6, -18, 3], [5, -19.5, 3], [0.5, -21.5, 2.5], [-2.6, -16.4, 2.2], [-7.5, -12.2, 2], [0.5, -13, 1.5], [-12, -16, 1.5]];
     const onPath = (x, y) => (y > -12.2 && y < -5.8) || x < -19.5 || avoid.some(([ax, ay, ar]) => Math.hypot(x - ax, y - ay) < ar);
     let n = 0;
     for (let i = 0; i < 400 && n < (this.mobile ? 12 : 22); i++) {
       const x = -19 + r() * 28, y = -26 + r() * 54;
-      if (onPath(x, y) || (x > -6 && x < 6.5 && y > -6 && y < 17.5) || (x > -11.5 && x < -10.5)) continue;   // не в нашем доме и не на дороге
+      if (onPath(x, y) || (x > -7.6 && x < 8.6 && y > -6.2 && y < 18.3) || (x > -11.5 && x < -10.5)) continue;   // не в нашем доме и не на дороге
       if (x > -20.5 && x < -10.8 && y > -7) continue;                                                       // западная дорога
       P.push({ f: r() < 0.6 ? "tree_dead" : "tree_winter", x, y, h: 5 + r() * 4, yaw: r() * 6.28, colR: 0.3 });
       n++;
@@ -468,16 +482,19 @@ export class World {
         for (const m of C.materials) {
           mats.push(m); m.maxSimultaneousLights = this.mobile ? 6 : 8;
           // дома и школа — сплошные: прозрачность из текстуры на расстоянии «съедает» стены
-          if (/^(house_|school)/.test(o.f)) {
+          if (/^(tower|block|panel|school)/.test(o.f)) {
             m.transparencyMode = 0; m.alpha = 1; m.useAlphaFromAlbedoTexture = false; m.needDepthPrePass = false;
             if (m.albedoTexture) m.albedoTexture.hasAlpha = false;
-            m.backFaceCulling = false;
+            // свой дом изнутри квартиры не виден (односторонние стены), остальные — сплошные с обеих сторон
+            m.backFaceCulling = /^tower/.test(o.f);
+            if (o.f !== "school") (this.buildingMats || (this.buildingMats = [])).push(m);
           }
         }
       }
       if (!C) continue;
+      if (o.box) { o.x = (o.box[0] + o.box[1]) / 2; o.y = (o.box[2] + o.box[3]) / 2; }
       const tag = (o.hide || o.f) + "_" + (o.axis ? o.axis + o.near + "_" + o.along : Math.round(o.x) + "_" + Math.round(o.y));
-      const bigOne = /^(house_|school)/.test(o.f);       // большие дома склеиваем — копии, не экземпляры
+      const bigOne = /^(tower|block|school)/.test(o.f);       // большие дома склеиваем — копии, не экземпляры
       const inst = C.instantiateModelsToScene((nm) => tag + "_" + nm, false, { doNotInstantiate: bigOne });
       const holder = new TransformNode(tag, this.scene), inner = new TransformNode(tag + "_fit", this.scene);
       for (const rn of inst.rootNodes) rn.parent = inner;
@@ -495,8 +512,18 @@ export class World {
       };
       let bb = bounds();
       const sx = bb.max.x - bb.min.x, sz = bb.max.z - bb.min.z, sy = bb.max.y - bb.min.y;
-      if (o.len && sz > sx) inner.rotation.y = PI / 2;
-      inner.scaling.setAll(o.len ? o.len / Math.max(sx, sz) : o.h / Math.max(0.01, sy));
+      if (o.box) {
+        // точно в коробку: длинная сторона модели — вдоль длинной стороны коробки
+        const bw = o.box[1] - o.box[0], bd = o.box[3] - o.box[2];
+        const turn = o.wide ? sz > sx : (sz > sx) !== (bd > bw);
+        inner.rotation.y = (turn ? PI / 2 : 0) + (o.flip ? PI : 0);
+        // масштаб — в осях самой модели: после поворота её X ложится вдоль глубины коробки
+        inner.scaling.set(turn ? bd / sx : bw / sx, o.h / sy, turn ? bw / sz : bd / sz);
+        o.x = (o.box[0] + o.box[1]) / 2; o.y = (o.box[2] + o.box[3]) / 2;
+      } else {
+        if (o.len && sz > sx) inner.rotation.y = PI / 2;
+        inner.scaling.setAll(o.len ? o.len / Math.max(sx, sz) : o.h / Math.max(0.01, sy));
+      }
       if (o.hy) inner.scaling.y *= o.hy;      // панельки в модели приплюснутые: до высоты настоящей пятиэтажки
       bb = bounds();
       inner.position.set(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
@@ -529,6 +556,8 @@ export class World {
       }
       holder.position.copyFrom(B(o.x, o.y, -6.3));
       holder.rotation.y = yaw;
+      // габариты для коллайдера — до склейки (после неё детали удаляются)
+      const colBB = o.col !== false ? bounds() : null;
       if (bigOne) {
         // сотни деталей дома → один объект с несколькими материалами: в разы меньше отрисовок
         // сперва пересчитать всю цепочку родителей: иначе склейка «запечёт» старое положение и поворот
@@ -542,8 +571,8 @@ export class World {
       } else for (const m of inner.getChildMeshes(false)) { m.isPickable = false; m.receiveShadows = false; meshes.push(m); m.computeWorldMatrix(true); m.refreshBoundingInfo(); m.freezeWorldMatrix(); }
       if (o.hide && this.nodes[o.hide]) this.nodes[o.hide].setEnabled(false);
       // коллайдер: ствол — цилиндр, реквизит — коробка по габаритам
-      if (o.col !== false) {
-        bb = bounds();
+      if (colBB) {
+        bb = colBB;
         const c = o.colR
           ? MeshBuilder.CreateCylinder(tag + "_col", { diameter: o.colR * 2, height: 3 }, this.scene)
           : MeshBuilder.CreateBox(tag + "_col", { width: bb.max.x - bb.min.x, height: Math.min(2.5, bb.max.y - bb.min.y), depth: bb.max.z - bb.min.z }, this.scene);
@@ -551,35 +580,82 @@ export class World {
         c.isVisible = false; c.isPickable = false; c.checkCollisions = true;
       }
     }
+    await this._farCity(base, mats);
+    this._ownWindow(mats);
     return mats;
   }
 
-  // земля до горизонта и кольцо далёких панелек — чтобы из окна не был виден край карты
+  // Наше окно на глухом торце башни — снаружи видно, что в спальне кто-то есть (изнутри плоскость не видна)
+  _ownWindow(mats) {
+    const tex = new DynamicTexture("ownWinTex", { width: 128, height: 160 }, this.scene, true);
+    const ctx = tex.getContext();
+    ctx.fillStyle = "#d9d4c8"; ctx.fillRect(0, 0, 128, 160);
+    const g = ctx.createLinearGradient(0, 0, 0, 160);
+    g.addColorStop(0, "#0b0c10"); g.addColorStop(1, "#1a1612");
+    ctx.fillStyle = g;
+    for (const [x, y, w, h] of [[10, 10, 51, 44], [67, 10, 51, 44], [10, 60, 51, 90], [67, 60, 51, 90]]) ctx.fillRect(x, y, w, h);
+    tex.update();
+    const m = new StandardMaterial("ownWin", this.scene);
+    m.diffuseTexture = tex; m.emissiveTexture = tex; m.emissiveColor = new Color3(0.08, 0.08, 0.09); m.specularColor = Color3.Black();
+    m.backFaceCulling = true; m.maxSimultaneousLights = this.mobile ? 6 : 8;
+    mats.push(m);
+    const w = MeshBuilder.CreatePlane("ownWindow", { width: 1.5, height: 1.6 }, this.scene);
+    w.position.copyFrom(B(0, -4.77, 1.6));     // окно спальни, на 0,02 м перед торцом
+    w.rotation.y = Math.PI;                    // лицом во двор
+    w.material = m; w.isPickable = false;
+    this.extMeshes.push(w);
+    w.freezeWorldMatrix();
+  }
+
+  // Дальний город: два кольца девятиэтажек. Одна склеенная модель + «тонкие» копии —
+  // весь горизонт рисуется за несколько вызовов и не стоит процессору ничего.
+  async _farCity(base, mats) {
+    const PI = Math.PI;
+    let C;
+    try { C = await LoadAssetContainerAsync(base + "panel9.glb", this.scene); } catch (e) { console.warn("дальний город не загрузился", e); return; }
+    const inst = C.instantiateModelsToScene((nm) => "far_" + nm, false, { doNotInstantiate: true });
+    for (const rn of inst.rootNodes) { rn.computeWorldMatrix(true); for (const n of rn.getDescendants(false)) n.computeWorldMatrix(true); }
+    const parts = inst.rootNodes.flatMap((rn) => rn.getChildMeshes(false)).filter((m) => m.getTotalVertices() > 0);
+    const far = Mesh.MergeMeshes(parts, true, true, undefined, false, true);
+    if (!far) return;
+    for (const rn of inst.rootNodes) rn.dispose();
+    far.name = "farCity";
+    // длинной стороной вдоль X, низ на ноль, центр в начале координат — и запечь
+    far.refreshBoundingInfo();
+    let b = far.getBoundingInfo().boundingBox;
+    if (b.extendSize.z > b.extendSize.x) { far.rotation.y = PI / 2; far.bakeCurrentTransformIntoVertices(); far.refreshBoundingInfo(); b = far.getBoundingInfo().boundingBox; }
+    far.position.set(-b.center.x, -b.minimum.y, -b.center.z); far.bakeCurrentTransformIntoVertices(); far.refreshBoundingInfo();
+    const len = b.extendSize.x * 2;
+    for (const m of C.materials) {
+      mats.push(m); m.maxSimultaneousLights = this.mobile ? 6 : 8;
+      m.transparencyMode = 0; m.alpha = 1; m.useAlphaFromAlbedoTexture = false; m.backFaceCulling = false;
+      if (m.albedoTexture) m.albedoTexture.hasAlpha = false;
+      (this.buildingMats || (this.buildingMats = [])).push(m);
+    }
+    const rings = this.mobile ? [[110, 14, 0]] : [[108, 16, 0], [142, 20, 0.5]];
+    const q = new Quaternion();
+    for (const [R, n, off] of rings) {
+      for (let i = 0; i < n; i++) {
+        const a = ((i + off) / n) * PI * 2, k = (44 + (i % 3) * 6) / len;
+        Quaternion.RotationYawPitchRollToRef(-a + PI / 2, 0, 0, q);
+        far.thinInstanceAdd(Matrix.Compose(new Vector3(k, 1 + (i % 4) * 0.08, k), q, new Vector3(Math.cos(a) * R, -6.3, -4 + Math.sin(a) * R)), false);
+      }
+    }
+    far.thinInstanceBufferUpdated("matrix");
+    far.thinInstanceRefreshBoundingInfo(false);
+    far.isPickable = false; far.receiveShadows = false;
+    this.extMeshes.push(far);
+    far.freezeWorldMatrix();
+  }
+
+  // земля до горизонта (дальние дома — кольца девятиэтажек в _loadHouses)
   _horizon(mats) {
     const scene = this.scene, G = -6.3;
     const snow = mats.find((m) => m.name === "Snow");
-    const facades = mats.filter((m) => /^Facade_[ABC]$/.test(m.name));
     const ground = MeshBuilder.CreateGround("farGround", { width: 320, height: 320 }, scene);
     ground.position.y = G - 0.05;
     if (snow) ground.material = snow;
     ground.isPickable = false;
-    let seed = 7;
-    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    // два плотных кольца домов внахлёст — сквозь просветы не видно края
-    const ring = [];
-    for (let i = 0; i < 44; i++) ring.push([i / 44, 92 + r() * 12, 50 + r() * 20, 15.6 + (r() < 0.35 ? 14 : 0)]);
-    for (let i = 0; i < 40; i++) ring.push([(i + 0.5) / 40, 135 + r() * 10, 70 + r() * 25, 30 + r() * 15]);
-    for (let i = 0; i < ring.length; i++) {
-      const [frac, dist, w, h] = ring[i];
-      const a = frac * Math.PI * 2;
-      const d = 14;
-      const b = MeshBuilder.CreateBox("farHouse" + i, { width: w, height: h, depth: d }, scene);
-      b.position.set(Math.cos(a) * dist, G + h / 2, -4 + Math.sin(a) * dist);
-      b.rotation.y = -a + Math.PI / 2;
-      b.material = facades[i % facades.length];
-      b.isPickable = false;
-      b.freezeWorldMatrix();
-    }
   }
 
   _blizzard() {
@@ -591,12 +667,12 @@ export class World {
     ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32); tex.hasAlpha = true; tex.update();
     // метель вокруг дома: ветер несёт снег с запада на восток
     const zones = [
-      [B(-14, -26, -6), B(14, -4.6, 8)],     // двор (окно спальни, подъезд)
-      [B(-20, -4, -6), B(-5.2, 16, 8)],      // запад (мамино окно)
-      [B(5.6, -4, -6), B(20, 16, 8)],        // восток (кухня, детская, лоджия)
+      [B(-16, -28, -6), B(16, -5.1, 10)],    // двор (окно спальни, подъезд)
+      [B(-26, -4, -6), B(-10.5, 18, 10)],    // запад (мамино окно)
+      [B(8.7, -4, -6), B(26, 18, 10)],      // восток (кухня, детская, лоджия)
     ];
     this.snow = zones.map(([a, b]) => {
-      const ps = new ParticleSystem("snow", this.mobile ? 250 : 900, scene);
+      const ps = new ParticleSystem("snow", this.mobile ? 600 : 2200, scene);
       ps.particleTexture = tex;
       ps.emitter = new Vector3(0, 0, 0);
       ps.minEmitBox = new Vector3(Math.min(a.x, b.x), Math.max(a.y, b.y), Math.min(a.z, b.z));
@@ -604,8 +680,8 @@ export class World {
       ps.direction1 = new Vector3(3.5, -1.2, -0.8); ps.direction2 = new Vector3(6.0, -2.0, 0.8);
       ps.minEmitPower = 2.5; ps.maxEmitPower = 5;
       ps.minLifeTime = 4; ps.maxLifeTime = 7;
-      ps.minSize = 0.12; ps.maxSize = 0.26;
-      ps.emitRate = this.mobile ? 80 : 420;
+      ps.minSize = 0.1; ps.maxSize = 0.3;
+      ps.emitRate = this.mobile ? 150 : 650;
       ps.color1 = new Color4(1, 1, 1, 0.85); ps.color2 = new Color4(0.85, 0.85, 0.95, 0.6);
       ps.colorDead = new Color4(1, 1, 1, 0);
       ps.blendMode = ParticleSystem.BLENDMODE_STANDARD;
@@ -617,7 +693,7 @@ export class World {
         base(particles);
         for (const p of particles) {
           const q = p.position;
-          if (q.x > -5.3 && q.x < 5.8 && q.z > -16.95 && q.z < 4.75 && q.y > -6.4 && q.y < 9.5) { p.age = p.lifeTime; p.color.a = 0; }
+          if (q.x > -10.4 && q.x < 8.6 && q.z > -17.1 && q.z < 5.05 && q.y > -6.4 && q.y < 24) { p.age = p.lifeTime; p.color.a = 0; }
         }
       };
       ps.start();
@@ -703,11 +779,11 @@ export class World {
   }
 
   setOutside({ windows, lamps, storm } = {}) {
-    if (windows !== undefined) this.outside.windows = windows;
+    if (windows !== undefined) { this.outside.windows = windows; if (this.setWindowGlow) this.setWindowGlow(windows); }
     if (lamps !== undefined) this.outside.lamps = lamps;
     if (storm !== undefined) {
       this.outside.storm = storm;
-      for (const ps of this.snow) { ps.emitRate = (this.mobile ? 90 : 260) * storm; ps.minEmitPower = 1 + storm * 1.5; ps.maxEmitPower = 2 + storm * 3; }
+      for (const ps of this.snow) { ps.emitRate = (this.mobile ? 150 : 650) * storm; ps.minEmitPower = 1 + storm * 1.5; ps.maxEmitPower = 2 + storm * 3; }
     }
   }
 
@@ -754,6 +830,7 @@ export class World {
       this.garageLight.intensity += (g * 9 - this.garageLight.intensity) * Math.min(1, dt * 20);
     }
     this._yardUpdate(dt, t, playerPos);
+    if (this.updateVeils) this.updateVeils(dt, playerPos, this.outside ? this.outside.storm : 1);
     if (this.street) {
       const o = this.outside;
       for (const S of this.street) {

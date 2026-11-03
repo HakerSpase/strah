@@ -32,7 +32,7 @@ export class Player {
     this.body.ellipsoidOffset = new Vector3(0, EYE / 2 + 0.02, 0);
 
     const cam = (this.camera = new UniversalCamera("cam", new Vector3(0, EYE, 0), scene));
-    cam.minZ = 0.04; cam.maxZ = 60;
+    cam.minZ = 0.05; cam.maxZ = 260;      // небо и дальние дома за окном (туман прячет даль)
     cam.fov = 1.08;
     cam.inputs.clear();
     scene.activeCamera = cam;

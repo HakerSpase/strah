@@ -36,5 +36,5 @@ npm run dev
 ## Авторы ресурсов
 - Модель сущности: «SCP-096» — Mm123, https://sketchfab.com/3d-models/scp-096-7074212c3ba54d0d959c48c55b8fefce, лицензия CC BY-SA 4.0 (используется с масштабированием и переименованием анимаций).
 - Голоса: ElevenLabs. Звуки: Mixkit (см. public/sounds/CREDITS.md). Текстуры: Poly Haven (CC0).
-- Двор (Sketchfab, CC BY / CC BY-SA, см. авторов на страницах моделей): «Russian panel house (asset)» — Tim0; «Soviet panel house built in the 1970s» — UnkaII; «Soviet School – 3D Model» — dimmeyster; «Dead Tree» — MaX3Dd; «Winter Tree» — JSLGames; «Snow Pine Tree and Bush Pack» — Sketchfab model 7afc4ca2; «Rusty Soviet Slide» — shtran; «USSR Swings», «USSR Bench» — se660745; «Seesaw Type-1» — targettius.
+- Двор (Sketchfab, CC BY / CC BY-SA, см. авторов на страницах моделей): «Pivdennyy city 9-floor panel building», «Mykolaiv 9 floor panel blocks» — Randonavt; «5 storey residential building» — alwayshasbean; «Soviet Residential Building» — Ivan-Kanaev; «Panel house, 9 floors» — hasped0; «Soviet School – 3D Model» — dimmeyster; «Dead Tree» — MaX3Dd; «Winter Tree» — JSLGames; «Snow Pine Tree and Bush Pack» — Sketchfab model 7afc4ca2; «Rusty Soviet Slide» — shtran; «USSR Swings», «USSR Bench» — se660745; «Seesaw Type-1» — targettius.
 - Голоса (ElevenLabs): герой — Liam, Аня — Gigi, «мама» — Matilda.
