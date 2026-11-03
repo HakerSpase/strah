@@ -33,7 +33,7 @@ WALLS = [
     ("x", 2.2, -4.4, 0.0, []),
     ("y", 0.0, -2.2, 2.2, [(-0.45, 0.45, "door")]),
     ("x", -0.8, 0.0, 12.0, [(2.6, 3.5, "door"), (7.2, 7.95, "door"), (9.15, 9.8, "door")]),
-    ("x", 0.8, 0.0, 12.0, [(1.3, 2.15, "door"), (4.6, 5.35, "door"), (8.3, 9.3, "door")]),
+    ("x", 0.8, 0.0, 12.0, [(1.3, 2.15, "door"), (4.35, 5.35, "door"), (8.3, 9.3, "door")]),
     ("y", 12.0, -0.8, 0.8, [(-0.45, 0.45, "door")]),
     ("x", -0.8, 12.0, 13.4, []),
     ("x", 0.8, 12.0, 13.4, []),
@@ -260,7 +260,7 @@ switch("Switch_Kitchen", 0.86, 8.15, "+x")
 
 
 # ======================= ДВЕРИ =======================
-def door(name, axis, c, ha, hb, open_dir, kind="glass", into=1):
+def door(name, axis, c, ha, hb, open_dir, kind="glass", into=1, hinge_end=False):
     """Дверное полотно с петлёй в начале проёма. Строится в локальных координатах:
     полотно вдоль +X, толщина по Y, затем объект поворачивается под стену."""
     w = (hb - ha) - 0.045
@@ -318,6 +318,9 @@ def door(name, axis, c, ha, hb, open_dir, kind="glass", into=1):
     if axis == "y":
         ob.location = (hinge_a, c, 0)
         ob.rotation_euler = (0, 0, 0)
+    elif hinge_end:   # петля в конце проёма: полотно идёт назад, к началу
+        ob.location = (c, hb - 0.022, 0)
+        ob.rotation_euler = (0, 0, -math.pi / 2)
     else:
         ob.location = (c, hinge_a, 0)
         ob.rotation_euler = (0, 0, math.pi / 2)
@@ -329,7 +332,7 @@ def door(name, axis, c, ha, hb, open_dir, kind="glass", into=1):
 door("Door_Bedroom", "y", 0.0, -0.45, 0.45, -1, "glass")
 door("Door_Mom", "x", -0.8, 2.6, 3.5, 1, "glass")
 door("Door_Bath", "x", -0.8, 7.2, 7.95, 1, "panel")
-door("Door_Closet", "x", 0.8, 4.6, 5.35, -1, "panel")
+door("Door_Closet", "x", 0.8, 4.35, 5.35, -1, "panel", hinge_end=True)   # петля у дальнего края: из коридора проём сразу открыт
 door("Door_Front", "y", 12.0, -0.45, 0.45, 1, "front")
 door("Door_Outer", "y", 13.4, -0.45, 0.45, 1, "metal")
 door("Door_Kids", "x", 0.8, 1.3, 2.15, -1, "glass")

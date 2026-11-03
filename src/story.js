@@ -639,7 +639,7 @@ export class Story {
     ui.say("Она знала. Все эти годы — знала. И кормила его собой.", { sec: 4 });
     await wait(2.5, tk);
     // кладовка сама приоткрывается — и в коридоре гаснет свет
-    w.setDoor("Door_Closet", true, { speed: 0.4, amount: 0.5 });
+    w.setDoor("Door_Closet", true, { speed: 0.6 });   // открыта настежь — проём свободен
     this._door("Door_Closet");
     this.goal("Кладовка. Аня пряталась там", "дверь справа в коридоре, напротив маминой комнаты", "Кладовка");
     await until(() => this.inRoom("corr"), tk);

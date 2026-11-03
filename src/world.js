@@ -83,7 +83,7 @@ export class World {
     // межкомнатные двери — чуть выше, чтобы полотно заходило под наличник без щели сверху
     for (const k of ["Door_Bedroom", "Door_Mom", "Door_Bath", "Door_Closet", "Door_Kids", "Door_WC", "Door_Loggia"]) if (this.doors[k]) this.doors[k].node.scaling.y = 1.03;
     // кладовка узкая: дверь открывается в коридор, иначе изнутри её не закрыть
-    if (this.doors.Door_Closet) { this.doors.Door_Closet.dir = 1; this.doors.Door_Closet.max = 1.45; }
+    if (this.doors.Door_Closet) { this.doors.Door_Closet.dir = -1; this.doors.Door_Closet.max = 1.5; }   // петля у дальнего края, полотно уходит в коридор и не перекрывает вход
     await this._loadInterior(base);
     this._setupMirrors();
     this._setupProps();
